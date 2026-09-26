@@ -106,10 +106,9 @@ class Rules:
             i = max(range(len(cmd.summonable)), key=lambda k: (self.name(cmd.summonable[k].code) in ENGINE,
                                                                 self._atk(cmd.summonable[k].code)))
             return IdleCmd.encode(IDLE_SUMMON, i)
-        for i, c in enumerate(cmd.activatable):          # any other activation, once
-            if c.location == LOCATION_HAND or not self._used(c, turn):
-                if self.name(c.code) not in ENGINE and c.code != DD_CROW:
-                    return IdleCmd.encode(IDLE_ACTIVATE, i)
+        # No other activations here. These rules finish a turn inside a lookahead copy; firing "anything
+        # activatable" there used Judgment Dragon's wipe, Brionac's discard, Gorz... on our own board after
+        # every Battle Phase, so "attack" always scored below "end turn". Other plays are the search's job.
         if cmd.to_bp and allow_bp:
             return IdleCmd.encode(IDLE_TO_BP)
         return IdleCmd.encode(IDLE_TO_EP)
@@ -145,7 +144,14 @@ class Rules:
                 info = opp.get(sel.places[i][2]) if sel.places else None
                 return self._def_value(info) if info else 0
             return SelectCard.encode([min(range(len(sel.codes)), key=target_cost)])
-        # Prefer the opponent's strongest card, else our best monster to revive / Lightsworn to discard.
+        mine = [i for i in range(len(sel.codes)) if not sel.places or sel.places[i][0] == self.me]
+        if mine and len(mine) == len(sel.codes) and all(sel.places[i][1] == LOCATION_HAND for i in mine):
+            # A discard/cost from our hand: Wulf first (it Special Summons itself when discarded), else the
+            # lowest-ATK card - never our best one.
+            order = sorted(mine, key=lambda i: (self.name(sel.codes[i]) != "Wulf, Lightsworn Beast",
+                                                 self._atk(sel.codes[i])))
+            return SelectCard.encode(sorted(order[:max(1, sel.min)]))
+        # Prefer the opponent's strongest card, else our best monster to revive / Lightsworn to search.
         def value(i):
             con = sel.places[i][0] if sel.places else self.me
             atk = self._atk(sel.codes[i])
@@ -213,9 +219,11 @@ def score(duel, me: int, db: CardDB, hidden_opp_hand: int, hidden_opp_set: int, 
     # LP: 1000 LP = 20 with a full Deck, worth up to 4x as much as our Deck runs out - a mill deck
     # must close the game before it decks out, so damage and attacking matter more late.
     urgency = 1.0 + max(0, 30 - deck) / 10.0
-    s += 0.02 * urgency * (my_lp - op_lp)
+    # Pressure: damage to the opponent is worth 60 per 1000 LP (a 1600-ATK direct attack ~ one card), our
+    # own LP 30 per 1000; both up to 4x as our Deck runs out.
+    s += urgency * (0.03 * my_lp - 0.06 * op_lp)
     face_up = [c for c in my_mons if c.position & 0x5]
-    s += sum(c.attack for c in face_up) / 100.0 + 15.0 * min(len(my_mons), 3)
+    s += sum(c.attack for c in face_up) / 40.0 + 15.0 * min(len(my_mons), 3)   # board ATK: 1000 = 25
     s -= 10.0 * max(0, len(my_mons) - 3)                   # don't overcommit into mass removal
     ls = {c.code for c in mine.grave if c and "Lightsworn" in db.archetypes(c.code)}
     s += 10.0 * min(len(ls), 4)                            # Judgment Dragon needs 4 names
@@ -284,6 +292,7 @@ class LightswornPilot:
             cmd = parse_idlecmd(msg.payload)
             if cmd.player == self.me:
                 self._can_bp = cmd.to_bp  # the engine knows whether we may still battle this turn
+                self._in_battle = False
                 return self._remember(self._search("idle", cmd, duel), cmd, None)
         if msg.id == MSG_SELECT_BATTLECMD:
             cmd = parse_select_battlecmd(msg.payload)
@@ -452,6 +461,12 @@ class LightswornPilot:
             def watched():
                 batch = read()
                 for m in batch:
+                    if m.id == MSG_NEW_TURN and roll.turn.number == 0:
+                        # The copy's own start. Do NOT reset the turn: the constraints carried in from the
+                        # real duel (Normal Summon used, attackers used, effects used) must survive it -
+                        # resetting here let every copy Summon and attack a second time.
+                        roll.turn.number, roll.turn.player = 1, m.payload[0]
+                        continue
                     roll.turn.observe(m.id, m.payload)
                     if m.id == MSG_WIN or (m.id == MSG_NEW_TURN and roll.turn.number > 1):
                         roll.done = True

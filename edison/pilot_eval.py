@@ -118,6 +118,10 @@ def main() -> int:
     print(f"pilot win rate {sum(map(won, results)) / len(results):.1%} "
           f"(going first {sum(map(won, first))}/{len(first)}, going second {sum(map(won, second))}/{len(second)}, "
           f"draws/unfinished {draws})")
+    wins_ = [r for r in results if won(r)]
+    print(f"avg turns per win {sum(r['turns'] for r in wins_) / max(1, len(wins_)):.1f} "
+          f"(duel turns, both players; losses avg "
+          f"{sum(r['turns'] for r in results if not won(r)) / max(1, len(results) - len(wins_)):.1f})")
     print(f"mean turns {sum(r['turns'] for r in results) / len(results):.1f}, retries {sum(r['retries'] for r in results)}, "
           f"searches/duel {sum(r['searches'] for r in results) / len(results):.1f}, "
           f"copies/duel {sum(r['copies'] for r in results) / len(results):.0f}")
