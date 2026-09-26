@@ -16,7 +16,32 @@ Nothing about how duels run was changed.
 **Decks** = how many of the six opponent archetypes' tournament decks (TopDeck.gg data) contain the
 cards that bring the rule into play. BW-DAD 549, BW 511, Frog 483, LS 372, Machina 250, GB 188.
 
-## Differences the engine gets wrong today (all have a core flag, except the last)
+## Edison preset (applied)
+
+Edison duels run through `edison.duel.EdisonDuel` with `EDISON_FLAGS`. That is `MASTER_RULE_5`
+minus `DUEL_TRIGGER_ONLY_IN_LOCATION`, plus `DUEL_1ST_TURN_DRAW`, `DUEL_TCG_FAST_EFFECT_IGNITION`,
+`DUEL_TCG_SEGOC_FIRSTTRIGGER`, `DUEL_1_FACEUP_FIELD`, `DUEL_CAN_REPOS_IF_NON_SUMPLAYER` and
+`DUEL_0_ATK_DESTROYED`. `engine.duel.Duel` (puzzles, every other test) keeps `MASTER_RULE_5`.
+
+Ignition priority uses the TCG variant. The site's example (priority for Plaguespreader Zombie's
+effect in the GY) needs ignition effects off the field, and the core limits the OCG variant to the
+Monster Zone.
+
+`edison/tests/test_edison_duel.py` fails if an Edison duel runs without the preset: the same deck
+opens with 6 cards in an EdisonDuel and 5 in a plain Duel.
+
+## Known gaps (not implemented)
+
+| Rule | Why not |
+|---|---|
+| One manual chain per damage substep | Flag exists (`DUEL_SINGLE_CHAIN_IN_DAMAGE_SUBSTEP`), not tested - not enabled |
+| Battle Step replays | Flag exists (`DUEL_STORE_ATTACK_REPLAYS`), not tested - not enabled |
+| Paying LP that would make you lose is not allowed | No core flag |
+| Hand-size discard: optional triggers can't activate, chaining restricted | No core flag |
+| Negated phase triggers re-activate (Lightsworn vs LaDD) | Not tested |
+| Black Garden 2010 text | See errata_2010.csv (known_gap) |
+
+## Measured differences (before the preset; tables below are the engine under plain MR5)
 
 | Rule (2010) | Engine today (MR5) | With flag | Flag | Could matter |
 |---|---|---|---|---|
@@ -62,6 +87,6 @@ EDOPro's GOAT preset also sets `DUEL_USE_TRAPS_IN_NEW_CHAIN`, `DUEL_6_STEP_BATLL
 | Union | Decks |
 |---|---|
 | Machina Gearframe | Machina 250, Frog 4, BW-DAD 1 (old-Union override in place) |
-| **Machina Peacekeeper** | Machina 17. Its script still uses the modern rule (`AddUnionProcedure(..., false)`). Not on the site's errata list, but the site's Union Monsters page says *all* Unions follow the old one-Union rule in Edison. |
+| Machina Peacekeeper | Machina 17. Old-Union override in `edison/scripts/c78349103.lua` (same one-argument change as Gearframe), tested in `test_errata_2010.py`. |
 
 No other Union Monster appears in these decks.
