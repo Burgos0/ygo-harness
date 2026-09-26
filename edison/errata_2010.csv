@@ -1,19 +1,19 @@
-name,pool_passcode,pre_errata_passcode,pre_errata_name
-Elemental HERO Prisma,89312388,,
-Light and Darkness Dragon,47297616,,
-Machina Gearframe,42940404,,
-Quickdraw Synchron,20932152,,
-Red-Eyes Darkness Metal Dragon,88264978,88264988,Red-Eyes Darkness Metal Dragon (Pre-Errata)
-Rescue Cat,14878871,511002992,Rescue Cat (Pre-Errata)
-"Ryko, Lightsworn Hunter",21502796,511003007,"Ryko, Lightsworn Hunter (Pre-Errata)"
-Sangan,26202165,511002631,Sangan (Pre-Errata)
-Treeborn Frog,12538374,,
-"Brionac, Dragon of the Ice Barrier",50321796,511002993,"Brionac, Dragon of the Ice Barrier (Pre-Errata)"
-Goyo Guardian,7391448,511002994,Goyo Guardian (Pre-Errata)
-Black Garden,71645242,,
-Brain Control,87910978,511002995,Brain Control (Pre-Errata)
-Future Fusion,77565204,511002997,Future Fusion (Pre-Errata)
-Mausoleum of the Emperor,80921533,,
-Necrovalley,47355498,511002998,Necrovalley (Pre-Errata)
-Soul Exchange,68005187,,
-Ultimate Offering,80604091,511003023,Ultimate Offering (Pre-Errata)
+name,pool_passcode,pre_errata_passcode,pre_errata_name,status,note
+Elemental HERO Prisma,89312388,,,override,edison/scripts/c89312388.lua
+Light and Darkness Dragon,47297616,,,no_change_needed,"current script already destroys, then Special Summons (sequential), as the site's note requires"
+Machina Gearframe,42940404,,,override,edison/scripts/c42940404.lua
+Quickdraw Synchron,20932152,,,override,edison/scripts/c20932152.lua
+Red-Eyes Darkness Metal Dragon,88264978,88264988,Red-Eyes Darkness Metal Dragon (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Rescue Cat,14878871,511002992,Rescue Cat (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+"Ryko, Lightsworn Hunter",21502796,511003007,"Ryko, Lightsworn Hunter (Pre-Errata)",pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Sangan,26202165,511002631,Sangan (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Treeborn Frog,12538374,,,override,edison/scripts/c12538374.lua
+"Brionac, Dragon of the Ice Barrier",50321796,511002993,"Brionac, Dragon of the Ice Barrier (Pre-Errata)",pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Goyo Guardian,7391448,511002994,Goyo Guardian (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Black Garden,71645242,,,known_gap,not implemented: plays with the current text
+Brain Control,87910978,511002995,Brain Control (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Future Fusion,77565204,511002997,Future Fusion (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Mausoleum of the Emperor,80921533,,,override_partial,edison/scripts/c80921533.lua: Summon cannot be negated; not literally mid-resolution (core defers Summons past the chain)
+Necrovalley,47355498,511002998,Necrovalley (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
+Soul Exchange,68005187,,,override,edison/scripts/c68005187.lua
+Ultimate Offering,80604091,511003023,Ultimate Offering (Pre-Errata),pre_errata_card,normal passcode plays the (Pre-Errata) card (edison/errata.py)
