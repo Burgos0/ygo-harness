@@ -180,6 +180,31 @@ class Gearframe(Scripted):
         return None
 
 
+PEACEKEEPER = 78349103
+
+
+class Peacekeeper(Gearframe):
+    """Same scenario with Machina Peacekeeper (a Union Machine, same Machine-equip rule)."""
+
+    def idle(self, cmd, duel):
+        if cmd.player != 0:
+            return None
+        units = [i for i, c in enumerate(cmd.activatable) if c.code == PEACEKEEPER]
+        if not self.equipped:
+            self.equipped = True
+            return IdleCmd.encode(IDLE_ACTIVATE, units[0])
+        self.second_can_equip = bool(units)
+        return None
+
+
+def test_peacekeeper_old_union_rule(tmp_path):
+    """Not on the site's errata list, but its Union page: all Unions follow the old one-Union rule."""
+    f = field(card(PEACEKEEPER, 0, "LOCATION_MZONE", seq=0), card(PEACEKEEPER, 0, "LOCATION_MZONE", seq=1),
+              card(CYBER_DRAGON, 0, "LOCATION_MZONE", seq=2))
+    assert run(f, Peacekeeper(), edison(), tmp_path).second_can_equip is False
+    assert run(f, Peacekeeper(), OFFICIAL, tmp_path).second_can_equip is True
+
+
 def test_gearframe_2010_one_union_per_monster(tmp_path):
     f = field(card(GEARFRAME, 0, "LOCATION_MZONE", seq=0), card(GEARFRAME, 0, "LOCATION_MZONE", seq=1),
               card(CYBER_DRAGON, 0, "LOCATION_MZONE", seq=2))
