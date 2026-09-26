@@ -25,10 +25,12 @@ class Stop(Exception):
     pass
 
 
-def field(*cards: str, lp: int = 8000) -> str:
-    """cards: Debug.AddCard(...) lines. No DUEL_SIMPLE_AI: that flag makes the core play player 1."""
+def field(*cards: str, lp: int = 8000, rule: int = 3, flags: str = "DUEL_ATTACK_FIRST_TURN") -> str:
+    """cards: Debug.AddCard(...) lines. `rule` is ReloadFieldBegin's Master Rule: the core ORs in
+    DUEL_MODE_MR<rule> (libdebug.cpp), so rule=5, flags="0" is exactly the harness's MASTER_RULE_5 duel.
+    No DUEL_SIMPLE_AI: that flag makes the core play player 1."""
     return "\n".join([
-        "Debug.ReloadFieldBegin(DUEL_ATTACK_FIRST_TURN,3)",
+        f"Debug.ReloadFieldBegin({flags},{rule})",
         f"Debug.SetPlayerInfo(0,{lp},0,0)", f"Debug.SetPlayerInfo(1,{lp},0,0)",
         *cards, "Debug.ReloadFieldEnd()", ""])
 
@@ -37,6 +39,8 @@ class Scripted:
     def __init__(self):
         self.fallback = RandomLegal(seed=0)
         self.log: list[tuple] = []
+        #: every engine message seen, in order: (id, payload). Chain order, draws, etc. are read from here.
+        self.stream: list[tuple[int, bytes]] = []
 
     # hooks - return bytes to answer, None for the default
     def idle(self, cmd, duel):
@@ -80,6 +84,13 @@ def run(field_lua: str, policy: Scripted, scripts, tmp_path: Path, max_steps: in
     path.write_text(field_lua)
     duel = Duel.from_puzzle(Puzzle.load(path), lib=load(), carddb=CardDB(), scripts=scripts)
     with duel as d:
+        read = d._messages  # record every engine message, not only the decisions the policy is asked
+
+        def recording():
+            batch = read()
+            policy.stream.extend((m.id, m.payload) for m in batch)
+            return batch
+        d._messages = recording
         d.start()
         try:
             d.run(policy, max_steps=max_steps, policy1=policy)
