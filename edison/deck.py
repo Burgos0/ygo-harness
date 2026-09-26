@@ -11,7 +11,9 @@ Rules (each Violation names the card or section and the rule):
   main_size  main deck 40-60 cards
   extra_size extra deck at most 15
   side_size  side deck at most 15
-Passcodes in the returned deck are canonical, so they match the harness card database.
+Passcodes in the returned deck are the ones to play: alternate artworks resolved to the canonical
+passcode, then cards Edison plays with their April 2010 text swapped for the "(Pre-Errata)" card
+(edison/errata.py). For the pool and copy limits a pre-errata card and its normal card are one card.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from edison.aliases import canonical
+from edison.errata import play_code, rules_code
 
 HERE = Path(__file__).resolve().parent
 MAIN_MIN, MAIN_MAX, EXTRA_MAX, SIDE_MAX = 40, 60, 15, 15
@@ -87,7 +90,7 @@ def validate(deck: EdisonDeck) -> list[Violation]:
         if not lo <= len(cards) <= hi:
             bound = f"{lo}-{hi}" if lo else f"at most {hi}"
             found.append(Violation(rule, label, f"{label}: {len(cards)} cards, the rule is {bound}"))
-    counts = Counter(deck.main + deck.extra + deck.side)
+    counts = Counter(rules_code(c) for c in deck.main + deck.extra + deck.side)
     for code in sorted(counts, key=_name):
         name = _name(code)
         if code not in pool():
@@ -107,4 +110,4 @@ def load_ydk(path: str | Path) -> EdisonDeck:
     violations = validate(deck)
     if violations:
         raise DeckError(path, violations)
-    return deck
+    return EdisonDeck(*([play_code(rules_code(c)) for c in cards] for cards in (deck.main, deck.extra, deck.side)))

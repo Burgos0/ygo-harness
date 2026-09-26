@@ -1,12 +1,9 @@
 alt_passcode,canonical_passcode,name,source
 41356846,41356845,Acid Trap Hole,ygoprodeck
-76573257,76573247,Alien Infiltrator,cdb
-25862691,25862681,Ancient Fairy Dragon,cdb
 6150045,6150044,Arcana Knight Joker,ygoprodeck
 37970941,37970940,Aussa the Earth Charmer,cdb
 37970942,37970940,Aussa the Earth Charmer,cdb
 81480461,81480460,Barrel Dragon,manual
-65240394,65240384,Big Shield Gardna,cdb
 72989440,72989439,Black Luster Soldier - Envoy of the Beginning,cdb
 73580472,73580471,Black Rose Dragon,ygoprodeck
 53183601,53183600,Blue-Eyes Toon Dragon,cdb
@@ -34,7 +31,6 @@ alt_passcode,canonical_passcode,name,source
 97077564,97077563,Call of the Haunted,cdb
 91152257,91152256,Celtic Guardian,ygoprodeck
 91152258,91152256,Celtic Guardian,ygoprodeck
-33900658,33900648,Clear World,cdb
 57728571,57728570,Crush Card Virus,ygoprodeck
 70095155,70095154,Cyber Dragon,ygoprodeck
 1546124,1546123,Cyber End Dragon,ygoprodeck
@@ -104,8 +100,6 @@ alt_passcode,canonical_passcode,name,source
 759394,759393,Hiita the Fire Charmer,cdb
 759395,759393,Hiita the Fire Charmer,cdb
 37742479,37742478,Honest,cdb
-9995767,9995766,Imperial Custom,cdb
-9995776,9995766,Imperial Custom,cdb
 77585514,77585513,Jinzo,ygoprodeck
 60800382,60800381,Junk Warrior,cdb
 60800383,60800381,Junk Warrior,cdb
@@ -117,14 +111,12 @@ alt_passcode,canonical_passcode,name,source
 90330454,90330453,Last Day of Witch,ygoprodeck
 87322378,87322377,Launcher Spider,ygoprodeck
 23171611,23171610,Limiter Removal,cdb
-21593987,21593977,Makyura the Destructor,cdb
 31305912,31305911,Marshmallon,cdb
 68540059,68540058,Metalmorph,ygoprodeck
 32012842,32012841,Millennium Shield,ygoprodeck
 96782896,96782886,Mind Master,cdb
 83764719,83764718,Monster Reborn,ygoprodeck
 83011278,83011277,Mystic Tomato,ygoprodeck
-16226796,16226786,Night Assailant,cdb
 10000001,10000000,Obelisk the Tormentor,ygoprodeck
 10000002,10000000,Obelisk the Tormentor,ygoprodeck
 19230408,19230407,Offerings to the Doomed,ygoprodeck
@@ -137,7 +129,6 @@ alt_passcode,canonical_passcode,name,source
 24094655,24094653,Polymerization,cdb
 27847700,24094653,Polymerization,ygoprodeck
 12580478,12580477,Raigeki,cdb
-3784444,3784434,Rampaging Rhynos,cdb
 74677423,74677422,Red-Eyes Black Dragon,ygoprodeck
 74677424,74677422,Red-Eyes Black Dragon,ygoprodeck
 74677425,74677422,Red-Eyes Black Dragon,ygoprodeck
@@ -149,12 +140,10 @@ alt_passcode,canonical_passcode,name,source
 74677431,74677422,Red-Eyes Black Dragon,cdb
 64335805,64335804,Red-Eyes Black Metal Dragon,ygoprodeck
 88264979,88264978,Red-Eyes Darkness Metal Dragon,ygoprodeck
-88264988,88264978,Red-Eyes Darkness Metal Dragon,cdb
 32807847,32807846,Reinforcement of the Army,cdb
 32807848,32807846,Reinforcement of the Army,cdb
 14878872,14878871,Rescue Cat,ygoprodeck
 83555667,83555666,Ring of Destruction,ygoprodeck
-63394882,63394872,Senet Switch,cdb
 23401840,23401839,Senju of the Thousand Hands,ygoprodeck
 72443569,72443568,Silent Magician LV8,cdb
 32274491,32274490,Skull Servant,cdb
@@ -163,7 +152,6 @@ alt_passcode,canonical_passcode,name,source
 44508095,44508094,Stardust Dragon,ygoprodeck
 44508096,44508094,Stardust Dragon,cdb
 61257790,61257789,Stardust Dragon Assault Mode,cdb
-39188549,39188539,Storm Shooter,cdb
 70781053,70781052,Summoned Skull (Archfiend),cdb
 70781054,70781052,Summoned Skull (Archfiend),cdb
 70781055,70781052,Summoned Skull (Archfiend),cdb

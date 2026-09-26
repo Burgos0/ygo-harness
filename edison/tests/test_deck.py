@@ -87,3 +87,22 @@ def test_extra_deck_size(tmp_path):
 def test_side_deck_size(tmp_path):
     (v,) = rejected(ydk(tmp_path, side=SIDE + _unlimited(False, 20)[19:]))
     assert v.rule == "side_size" and v.card == "side deck" and "16 cards" in v.message and "at most 15" in v.message
+
+
+SANGAN, SANGAN_2010 = 26202165, 511002631  # Limited; "(Pre-Errata)" = April 2010 text
+
+
+def test_normal_sangan_plays_the_2010_text(tmp_path):
+    deck = load_ydk(ydk(tmp_path, main=MAIN[:-1] + [SANGAN]))
+    assert SANGAN_2010 in deck.main and SANGAN not in deck.main
+
+
+def test_pre_errata_sangan_is_accepted(tmp_path):
+    deck = load_ydk(ydk(tmp_path, main=MAIN[:-1] + [SANGAN_2010]))
+    assert deck.main.count(SANGAN_2010) == 1
+
+
+def test_both_sangan_passcodes_count_as_one_card(tmp_path):
+    (v,) = rejected(ydk(tmp_path, main=MAIN[:-1] + [SANGAN], side=SIDE[:-1] + [SANGAN_2010]))
+    assert v.rule == "banlist" and v.card == "Sangan"
+    assert "2 copies across main+extra+side" in v.message and "allows 1 (Limited)" in v.message

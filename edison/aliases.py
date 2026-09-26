@@ -10,8 +10,9 @@ Harpie Lady", "treated as Umi") are different cards and are deliberately not in 
 
 Sources, in the `source` column:
   ygoprodeck  YGOPRODeck lists every artwork passcode of a card under card_images
-  cdb         a BabelCDB row whose `alias` points at a passcode within ARTWORK_OFFSET
-              (EDOPro's artwork-version spacing; name aliases are far apart)
+  cdb         a BabelCDB row with the same name whose `alias` points at a passcode within
+              ARTWORK_OFFSET (EDOPro's artwork-version spacing; name aliases are far apart, and
+              "(Pre-Errata)" cards have their own name - see edison/errata.py)
   manual      MANUAL below
 The canonical passcode is the one present in BabelCDB as a non-alias row. A card where that
 is not exactly one passcode is reported and left out rather than guessed.
@@ -74,8 +75,10 @@ def build() -> int:
     names = {int(r["id"]): r["name"] for r in pool}
     for conn in db.conns:
         for code, alias in conn.execute("select id, alias from datas where alias != 0"):
+            # An artwork shares its target's name. "(Pre-Errata)" versions also carry an alias (and REDMD's
+            # sits within the offset) but are different cards with different text: edison/errata.py.
             if abs(code - alias) <= ARTWORK_OFFSET and (alias in pool_ids or code in pool_ids) \
-                    and code not in rows and is_base(alias):
+                    and code not in rows and is_base(alias) and db.name(code) == db.name(alias):
                 rows[code] = (alias, names.get(code) or names.get(alias) or db.name(alias), "cdb")
     for alt, base, name in MANUAL:
         rows[alt] = (base, name, "manual")
