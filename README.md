@@ -219,6 +219,17 @@ data/     cards.cdb + scripts, pinned by commit hash
 `agents/` and `bench/` are deliberately separated. Overfitting is a virtue in one and a sin in the
 other; eval splits are sealed and hashed before any agent tuning begins.
 
+## Data sources
+
+Tournament data for the Edison format (`edison/topdeck/`) is
+**data provided by [TopDeck.gg](https://topdeck.gg)** through its
+[tournament API](https://topdeck.gg/docs/tournaments-v2). Only derived data is committed
+(deck contents, results, pseudonymous player keys - no names); raw responses stay in the
+gitignored `edison/.cache/`. Fetching needs a free API key as `TOPDECK_API_KEY` in `.env`.
+
+The Edison card pool and March 2010 banlist come from [edisonformat.net](https://edisonformat.net);
+release dates for the cross-check from [YGOPRODeck](https://ygoprodeck.com).
+
 ## License
 
 **AGPL-3.0.** Not a choice — `ygopro-core` is AGPL and this links it.
