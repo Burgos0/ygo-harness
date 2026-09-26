@@ -43,9 +43,14 @@ from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTL
                              parse_select_battlecmd, parse_select_card, parse_select_chain)
 from engine.puzzle import Puzzle
 
-PLACEHOLDER = 15025844     # Mystical Elf, vanilla 800/2000: stands in for an unknown face-down monster
+#: A face-down monster we cannot see is treated as the format's typical small monster: DEF 500 is the
+#: median DEF of the 46,580 level 1-4 main-deck monster copies in the TopDeck Edison lists (quartiles
+#: 200 / 500 / 1200, mean 765). Worst-case (2000) made the pilot never attack face-downs and deck out.
+TYPICAL_FACEDOWN_DEF = 500
+PLACEHOLDER = 59053232     # Turu-Purun, vanilla 450/500: stands in for an unknown face-down monster
 FILLER = 15025844          # opponent's unknown Deck cards
 ENGINE = {"Lumina, Lightsworn Summoner", "Solar Recharge", "Charge of the Light Brigade"}
+JUDGMENT_DRAGON = "Judgment Dragon"
 DD_CROW = 24508238
 
 
@@ -97,8 +102,9 @@ class Rules:
         for i, c in enumerate(cmd.activatable):          # the engine first
             if self.name(c.code) in ENGINE and not self._used(c, turn):
                 return IdleCmd.encode(IDLE_ACTIVATE, i)
-        if not turn.normal_summoned and cmd.summonable:  # best Normal Summon
-            i = max(range(len(cmd.summonable)), key=lambda k: self._atk(cmd.summonable[k].code))
+        if not turn.normal_summoned and cmd.summonable:  # Lumina first (the engine), else the biggest
+            i = max(range(len(cmd.summonable)), key=lambda k: (self.name(cmd.summonable[k].code) in ENGINE,
+                                                                self._atk(cmd.summonable[k].code)))
             return IdleCmd.encode(IDLE_SUMMON, i)
         for i, c in enumerate(cmd.activatable):          # any other activation, once
             if c.location == LOCATION_HAND or not self._used(c, turn):
@@ -130,8 +136,10 @@ class Rules:
         sel = parse_select_card(msg.payload)
         if sel.max < 1 or not sel.codes:
             return None
-        if self.attack_pending:  # attack target: the weakest thing to run into
-            self.attack_pending = False
+        is_target = (self.attack_pending and sel.min == 1 and sel.max == 1 and sel.places
+                     and all(con != self.me and loc == LOCATION_MZONE for con, loc, _ in sel.places))
+        self.attack_pending = False
+        if is_target:  # attack target: the weakest thing to run into
             opp = {(c_seq): c for c_seq, c in enumerate(read_board(duel, 1 - self.me).monsters) if c}
             def target_cost(i):
                 info = opp.get(sel.places[i][2]) if sel.places else None
@@ -146,6 +154,8 @@ class Rules:
         return SelectCard.encode(sorted(order[:max(1, sel.min)]))
 
     def respond(self, msg, duel, turn: Turn) -> bytes:
+        if msg.id != MSG_SELECT_CARD:
+            self.attack_pending = False  # an attack that needed no target choice
         if msg.id == MSG_SELECT_CHAIN:
             return self.chain(parse_select_chain(msg.payload), turn.player == self.me)
         if msg.id in (MSG_SELECT_EFFECTYN, MSG_SELECT_YESNO):
@@ -171,12 +181,12 @@ class Rules:
         return row[5] if row and row[4] & TYPE_MONSTER else 0
 
     def _def_value(self, info) -> int:
-        """What an attacker must beat: ATK in Attack Position, DEF in face-up Defense, 2000 if unknown."""
+        """What an attacker must beat: ATK in Attack Position, DEF in face-up Defense, a typical DEF if unknown."""
         if info.position & 0x1:
             return info.attack
         if info.position & 0x4:
             return info.defense
-        return 2000
+        return TYPICAL_FACEDOWN_DEF
 
     @lru_cache(maxsize=None)
     def _lightsworn(self, code: int) -> bool:
@@ -185,7 +195,8 @@ class Rules:
 
 # ------------------------------------------------------------------ scoring
 
-def score(duel, me: int, db: CardDB, hidden_opp_hand: int, hidden_opp_set: int, extra_levels: tuple) -> float:
+def score(duel, me: int, db: CardDB, hidden_opp_hand: int, hidden_opp_set: int, extra_levels: tuple,
+          attacks: int = 0) -> float:
     fi = query_field(duel)
     mine, theirs = read_board(duel, me), read_board(duel, 1 - me)
     my_lp, op_lp = fi.lp[me], fi.lp[1 - me]
@@ -198,18 +209,27 @@ def score(duel, me: int, db: CardDB, hidden_opp_hand: int, hidden_opp_set: int, 
     op_cards = (sum(1 for c in theirs.hand if c) + hidden_opp_hand + sum(1 for c in theirs.monsters if c)
                 + sum(1 for c in theirs.spells if c) + hidden_opp_set)
     s = 100.0 * (my_cards - op_cards)                      # card advantage: heaviest
-    s += 0.02 * (my_lp - op_lp)                            # LP: 1000 LP = 20
+    deck = mine.deck_count or sum(1 for c in mine.deck if c)
+    # LP: 1000 LP = 20 with a full Deck, worth up to 4x as much as our Deck runs out - a mill deck
+    # must close the game before it decks out, so damage and attacking matter more late.
+    urgency = 1.0 + max(0, 30 - deck) / 10.0
+    s += 0.02 * urgency * (my_lp - op_lp)
     face_up = [c for c in my_mons if c.position & 0x5]
     s += sum(c.attack for c in face_up) / 100.0 + 15.0 * min(len(my_mons), 3)
     s -= 10.0 * max(0, len(my_mons) - 3)                   # don't overcommit into mass removal
     ls = {c.code for c in mine.grave if c and "Lightsworn" in db.archetypes(c.code)}
     s += 10.0 * min(len(ls), 4)                            # Judgment Dragon needs 4 names
+    if len(ls) >= 4 and any(c and db.name(c.code) == JUDGMENT_DRAGON for c in mine.hand):
+        s += 80.0                                          # Judgment Dragon summonable next turn
+    # Risk of committing into set Spells/Traps (Mirror Force, Torrential, Bottomless...): each face-down
+    # card the opponent controls threatens every extra monster we put out, and every attack we make.
+    op_set = hidden_opp_set + sum(1 for c in theirs.spells if c and not c.position & 0x5)
+    s -= op_set * (12.0 * max(0, len(my_mons) - 1) + 6.0 * attacks)
     tuners = [c.level for c in face_up if c.type & TYPE_TUNER]
     others = [c.level for c in face_up if not c.type & TYPE_TUNER]
     if any(t + o in extra_levels or t + o + o2 in extra_levels
            for t in tuners for i, o in enumerate(others) for o2 in [0] + others[i + 1:]):
         s += 20.0                                          # a Synchro play is on the board
-    deck = mine.deck_count or sum(1 for c in mine.deck if c)
     if deck < 10:
         s -= 5.0 * (10 - deck)                             # Lightsworn mills itself out
     return s
@@ -233,6 +253,7 @@ class LightswornPilot:
         self._hooked = None
         self.searches = self.copies = 0
         self._can_bp = False
+        self.plan = None   # the last searched Main/Battle Phase action: its snapshot, key and card picks
 
     def attach(self, duel) -> None:
         """Call before duel.start() so turn 1 is observed too (lazy hooking may miss it)."""
@@ -270,7 +291,34 @@ class LightswornPilot:
                 self._in_battle, self._can_bp = True, False
                 return self._remember(self._search("battle", cmd, duel), None, cmd)
         self._in_battle = False
+        if msg.id == MSG_SELECT_CARD and self.plan and self.turn.player == self.me:
+            return self._choose_card(msg, duel)
         return self.rules.respond(msg, duel, self.turn)
+
+    def _choose_card(self, msg, duel) -> bytes:
+        """A card choice during our turn (search, discard, revive target...): lookahead over the options.
+        The copy restarts from the snapshot of the Main/Battle Phase decision that led here, replays that
+        action and our earlier choices in it, then plays this option."""
+        sel = parse_select_card(msg.payload)
+        options = sorted({(c, *sel.places[i][:2]) for i, c in enumerate(sel.codes)}) if sel.places else []
+        plan = self.plan
+        if self.rules.attack_pending or not (sel.min == sel.max == 1 and 2 <= len(options) <= 12):
+            r = self.rules.respond(msg, duel, self.turn)
+        else:
+            self.searches += 1
+            best, best_score = None, float("-inf")
+            for opt in options:
+                sc = self._evaluate(plan["snap"], plan["kind"], plan["key"], picks=plan["picks"], choice=opt)
+                if sc > best_score:
+                    best, best_score = opt, sc
+            if best is None:  # every copy failed: fall back to the fixed rule
+                r = self.rules.respond(msg, duel, self.turn)
+            else:
+                r = SelectCard.encode([next(i for i, c in enumerate(sel.codes) if (c, *sel.places[i][:2]) == best)])
+        _, n = struct.unpack_from("<iI", r, 0)
+        idx = struct.unpack_from(f"<{n}I", r, 8)
+        plan["picks"].append([(sel.codes[i], *sel.places[i][:2]) for i in idx if i < len(sel.codes)])
+        return r
 
     def _remember(self, response: bytes, idle, battle) -> bytes:
         kind, index = struct.unpack("<i", response)[0] & 0xFFFF, struct.unpack("<i", response)[0] >> 16
@@ -321,14 +369,16 @@ class LightswornPilot:
     def _search(self, kind: str, cmd, duel) -> bytes:
         cands = self._candidates(kind, cmd)
         if len(cands) == 1:
+            self.plan = None
             return cands[0][0]
         self.searches += 1
         snap = self._snapshot(duel)
-        best, best_score = cands[-1][0], float("-inf")
+        (best, best_key), best_score = cands[-1], float("-inf")
         for response, key in cands:
             s = self._evaluate(snap, kind, key)
             if s > best_score:
-                best, best_score = response, s
+                best, best_key, best_score = response, key, s
+        self.plan = {"snap": snap, "kind": kind, "key": best_key, "picks": []}
         return best
 
     # -- copies
@@ -390,12 +440,12 @@ class LightswornPilot:
                 "extra_levels": extra_levels, "can_attack": can_attack,
                 "turn": self.turn}
 
-    def _evaluate(self, snap: dict, kind: str, key: tuple) -> float:
+    def _evaluate(self, snap: dict, kind: str, key: tuple, picks=(), choice=None) -> float:
         self.copies += 1
         path = Path(tempfile.gettempdir()) / f"lightsworn_copy_{id(self)}.lua"
         path.write_text(snap["lua"])
         copy = Duel.from_puzzle(Puzzle.load(path), lib=self.lib, carddb=self.db, scripts=self.scripts)
-        roll = _Rollout(self, snap, kind, key)
+        roll = _Rollout(self, snap, kind, key, picks, choice)
         with copy as d:
             read = d._messages
 
@@ -414,16 +464,19 @@ class LightswornPilot:
                 pass
             except Exception:
                 return float("-inf")
-            if not roll.applied:
+            if not roll.applied or roll.missed_choice:
                 return float("-inf")
-            return score(d, 0, self.db, snap["hidden_hand"], snap["hidden_set"], snap["extra_levels"])
+            return score(d, 0, self.db, snap["hidden_hand"], snap["hidden_set"], snap["extra_levels"],
+                         attacks=roll.attacks)
 
 
 class _Rollout:
     """Plays a copy: reach the matching decision, apply the candidate, finish the turn by fixed rules."""
 
-    def __init__(self, pilot: LightswornPilot, snap: dict, kind: str, key: tuple):
+    def __init__(self, pilot: LightswornPilot, snap: dict, kind: str, key: tuple, picks=(), choice=None):
         self.pilot, self.kind, self.key = pilot, kind, key
+        self.picks, self.choice, self.prompts = list(picks), choice, 0
+        self.attacks, self.missed_choice = 0, False
         real = snap["turn"]
         self.turn = Turn(normal_summoned=real.normal_summoned,
                          monster_effects_used=set(real.monster_effects_used), attacked=set(real.attacked))
@@ -454,12 +507,33 @@ class _Rollout:
             k, i = struct.unpack("<i", r)[0] & 0xFFFF, struct.unpack("<i", r)[0] >> 16
             if k == BATTLE_ATTACK:
                 self.turn.attacked.add(cmd.attackable[i].sequence)
+                self.attacks += 1
             return r
+        if msg.id == MSG_SELECT_CARD and self.applied and not self.rules.attack_pending and \
+                self.prompts <= len(self.picks) and (self.prompts < len(self.picks) or self.choice):
+            return self._replay_pick(msg, duel)
         if msg.id == MSG_SELECT_CHAIN:
             ch = parse_select_chain(msg.payload)
             if ch.player != 0:
                 return SelectChain.decline() if ch.can_decline() else SelectChain.encode(0)  # passive opponent
         return self.rules.respond(msg, duel, self.turn)
+
+    def _replay_pick(self, msg, duel) -> bytes:
+        sel = parse_select_card(msg.payload)
+        want = self.picks[self.prompts] if self.prompts < len(self.picks) else [self.choice]
+        self.prompts += 1
+        places = [(c, *sel.places[i][:2]) for i, c in enumerate(sel.codes)] if sel.places else []
+        idx = []
+        for w in want:
+            j = next((i for i, p in enumerate(places) if p == w and i not in idx), None)
+            if j is not None:
+                idx.append(j)
+        if self.prompts - 1 == len(self.picks) and not idx:
+            self.missed_choice = True          # the option under test is not on offer in the copy
+            self._fail()
+        if len(idx) < max(1, sel.min):
+            return self.rules.respond(msg, duel, self.turn)
+        return SelectCard.encode(sorted(idx))
 
     def _fail(self):
         self.done = True
@@ -501,6 +575,7 @@ class _Rollout:
             for i, c in enumerate(cmd.attackable):
                 if (c.code, c.sequence) == k[1:] and c.sequence not in self.turn.attacked:
                     self.turn.attacked.add(c.sequence)
+                    self.attacks += 1
                     self.applied = True
                     self.rules.attack_pending = True
                     return BattleCmd.encode(BATTLE_ATTACK, i)
