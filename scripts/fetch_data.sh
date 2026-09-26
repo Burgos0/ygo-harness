@@ -73,5 +73,9 @@ fi
 
 log "card databases:"
 ls -1 "$DATA/BabelCDB"/*.cdb 2>/dev/null | xargs -n1 basename | head -20
-log "scripts: $(ls "$DATA/CardScripts"/official/*.lua 2>/dev/null | wc -l | tr -d ' ') official, $(ls "$DATA/CardScripts"/*.lua 2>/dev/null | wc -l | tr -d ' ') root"
+# Count with find, not `ls dir/*.lua`: ~13.5k absolute paths overflow ARG_MAX on macOS, ls fails with
+# "Argument list too long", and with stderr discarded the count read "0 official" - which looks exactly
+# like the no-card-effects failure (CLAUDE.md trap 1) when the scripts are all there.
+count_lua() { find "$1" -maxdepth 1 -type f -name '*.lua' | wc -l | tr -d ' '; }
+log "scripts: $(count_lua "$DATA/CardScripts/official") official, $(count_lua "$DATA/CardScripts") root"
 cat "$DATA/DATA_COMMITS"
