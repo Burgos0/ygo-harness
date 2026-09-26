@@ -41,6 +41,27 @@ def test_auth_messages_classify_as_not_authenticated(message):
     assert "authentication" in low or "401" in message or "invalid api key" in low
 
 
+def _dotenv_defines(name: str) -> bool:
+    """Whether the repo-root .env assigns `name` a non-empty value (same line rules as
+    llm.provider._load_dotenv). Read directly, so an exported variable does not count."""
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / ".env"
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            if key.strip() == name and value.strip().strip("'\""):
+                return True
+    return False
+
+
+@pytest.mark.skipif(not _dotenv_defines("OPENROUTER_API_KEY"),
+                    reason="no OPENROUTER_API_KEY in .env (engine-only checkout): "
+                           "nothing to prove about loading it")
 def test_dotenv_is_loaded_without_an_exported_key(monkeypatch, tmp_path):
     """The root cause: nothing read .env, so the key silently became the
     literal string "not-needed"."""
