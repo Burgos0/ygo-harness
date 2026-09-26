@@ -32,6 +32,8 @@ PROPOSED: list[tuple[str, list[tuple[str, int]], int]] = [
     ("HERO Beat", [("Elemental HERO Stratos", 1), ("Miracle Fusion", 1)], 2),
     ("X-Sabers", [("X-Saber Airbellum", 1), ("XX-Saber Faultroll", 1), ("Saber Slash", 1)], 2),
     ("Gravekeepers", [("Gravekeeper's Spy", 1), ("Necrovalley", 1), ("Gravekeeper's Descendant", 1)], 2),
+    ("REDMD Dragons", [("Red-Eyes Darkness Metal Dragon", 1), ("Five-Headed Dragon", 1),
+                       ("Koa'ki Meiru Drago", 1)], 2),
     ("Chaos / DAD Control", [("Dark Armed Dragon", 1), ("Chaos Sorcerer", 1),
                              ("Return from the Different Dimension", 1)], 2),
 ]
