@@ -29,6 +29,7 @@ same final position we did.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -40,7 +41,10 @@ from engine.duel import Duel
 from engine.ocgapi import load, version
 from viz.replay import REPLAY_YRP1, parse_yrp
 
-EDOPRO = Path.home() / "Applications" / "ProjectIgnis"
+#: EDOPRO_DIR if set, else the .pkg's per-user install location - the same lookup as
+#: engine/puzzle.py, tests/test_yrp_edopro.py and scripts/install_deck.sh.
+EDOPRO = Path(os.environ.get("EDOPRO_DIR",
+                             Path.home() / "Applications" / "ProjectIgnis")).expanduser()
 
 
 class Desync(RuntimeError):
@@ -117,7 +121,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("replay")
     ap.add_argument("--edopro", default=str(EDOPRO),
-                    help="EDOPro install directory")
+                    help="EDOPro install directory (default: $EDOPRO_DIR, "
+                         "else ~/Applications/ProjectIgnis)")
     ap.add_argument("--engine", default="edopro", choices=["edopro", "ours"],
                     help="whose core, cards and scripts to replay through. "
                          "'ours' is the control: it must pass, and if it does "
