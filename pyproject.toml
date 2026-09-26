@@ -17,4 +17,4 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 line-length = 100
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "edison/tests"]
