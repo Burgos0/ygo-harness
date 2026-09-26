@@ -2,7 +2,7 @@
 
     python -m edison.check_engine
 
-For every card in edison/cardpool.csv with a passcode:
+For every card in edison/cardpool.csv with a passcode, resolved through edison/aliases.csv:
   missing_cdb     no row in the harness card databases (data/BabelCDB)
   missing_script  a non-Normal card whose c<passcode>.lua (or its alias's) is found neither in
                   edison/scripts nor in data/CardScripts - it would load with no effects (trap 1).
@@ -15,6 +15,7 @@ import csv
 from pathlib import Path
 
 from engine.carddb import CardDB
+from edison.aliases import canonical
 from edison.provider import EdisonScriptProvider
 
 HERE = Path(__file__).resolve().parent
@@ -27,7 +28,7 @@ def main() -> int:
     for r in csv.DictReader(open(HERE / "cardpool.csv")):
         if not r["id"]:
             continue
-        row = db.row(int(r["id"]))
+        row = db.row(canonical(r["id"]))
         if row is None:
             gaps.append((r["id"], r["name"], "missing_cdb"))
             continue

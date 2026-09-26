@@ -8,7 +8,8 @@ arrays of card names. Names map to passcodes through edison/cardpool.csv.
 Writes:
   banlist_2010_03.csv  id, name, copies, status - the 132 Forbidden/Limited/Semi-Limited cards
   edison.lflist.conf   EDOPro format. `$whitelist`: every card in the pool is listed (copies 3 unless
-                       banned/limited), so EDOPro also rejects cards outside the Edison pool. Drop it in
+                       banned/limited), so EDOPro also rejects cards outside the Edison pool. Passcodes are
+                       canonical (edison/aliases.csv), i.e. the ones the card database has. Drop it in
                        <EDOPro>/repositories/lflists/ or <EDOPro>/lflists/ to select it in the client.
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ import csv
 from pathlib import Path
 
 from edison import sources
+from edison.aliases import canonical
 
 HERE = Path(__file__).resolve().parent
 TITLE = "Edison (2010.03 TCG)"
@@ -40,7 +42,7 @@ def main() -> int:
         w = csv.writer(f)
         w.writerow(["id", "name", "copies", "status"])
         for name in sorted(banlist, key=lambda n: (banlist[n], n)):
-            w.writerow([ids[name], name, banlist[name], STATUS[banlist[name]]])
+            w.writerow([canonical(ids[name]), name, banlist[name], STATUS[banlist[name]]])
 
     no_id = []
     lines = [f"#[{TITLE}]", f"!{TITLE}", "$whitelist",
@@ -53,7 +55,7 @@ def main() -> int:
             if not r["id"]:
                 no_id.append(r["name"])
                 continue
-            lines.append(f"{r['id']} {copies} --{r['name']}")
+            lines.append(f"{canonical(r['id'])} {copies} --{r['name']}")
     (HERE / "edison.lflist.conf").write_text("\n".join(lines) + "\n")
 
     counts = {STATUS[c]: sum(1 for v in banlist.values() if v == c) for c in STATUS}
