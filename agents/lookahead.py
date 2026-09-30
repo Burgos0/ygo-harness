@@ -82,6 +82,10 @@ class Weights:
     hold: float = 40.0               # per unused set card / quick-play / trap in hand, both sides (theirs:
                                      # set cards only) - what spending one must beat on top of the card
     key_card: float = 60.0           # per profile key card in our hand, while unused
+    hold_behind_atk: float = 3000.0  # our holding value shrinks linearly to 0 as we fall this far behind on
+                                     # board (face-up ATK; a face-down monster counts TYPICAL_FACEDOWN_DEF)
+    threat_atk: int = 2000           # a monster the opponent Summoned this turn with at least this ATK, and
+    threat_hold: float = 0.0         # more than our best face-up monster, multiplies our holding value by this
     op_board_atk: float = 1 / 40     # per point of the opponent's face-up ATK (subtracted): so removing a
                                      # strong monster 1-for-1 is a gain and a weak one is not
     lethal_threat: float = 250.0     # the opponent's face-up ATK already reaches our LP
@@ -285,6 +289,24 @@ class GraveResources:
         return self.cache[code]
 
 
+STATUS_SUMMONED_THIS_TURN = 0x800 | 0x40000000     # STATUS_SUMMON_TURN | STATUS_SPSUMMON_TURN
+
+
+def hold_scale(mine, theirs, w: Weights) -> float:
+    """How much our unused cards are worth holding, 0..1. Full when even or ahead on board; shrinking to 0
+    as we fall behind by w.hold_behind_atk; times w.threat_hold while facing a monster the opponent Summoned
+    this turn that is big (>= w.threat_atk) and bigger than anything of ours. Holding is for later, and
+    behind on board or under a new threat there may be no later."""
+    def board(b):
+        return sum(c.attack if c.position & 0x5 else TYPICAL_FACEDOWN_DEF for c in b.monsters if c)
+    scale = min(1.0, max(0.0, 1.0 + (board(mine) - board(theirs)) / w.hold_behind_atk)) if w.hold_behind_atk else 1.0
+    best = max((c.attack for c in mine.monsters if c and c.position & 0x5), default=0)
+    if any(c and c.position & 0x5 and c.status & STATUS_SUMMONED_THIS_TURN and c.attack >= w.threat_atk
+           and c.attack > best for c in theirs.monsters):
+        scale *= w.threat_hold
+    return scale
+
+
 def card_advantage(mine, theirs, gy, hidden_opp_hand: int = 0, hidden_opp_set: int = 0) -> float:
     """Cards: hand + field for both sides, plus half a card per usable GY resource. Ours minus theirs."""
     def side(b, hidden):
@@ -318,8 +340,9 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     held = (sum(1 for c in mine.spells if c and not c.position & 0x5)
             + sum(1 for c in mine.hand if c and is_quick(c.code)))
     op_set = hidden_opp_set + sum(1 for c in theirs.spells if c and not c.position & 0x5)
-    s += w.hold * (held - op_set)
-    s += w.key_card * sum(1 for c in mine.hand if c and db.name(c.code) in profile.key_cards)
+    scale = hold_scale(mine, theirs, w)
+    s += w.hold * (scale * held - op_set)
+    s += scale * w.key_card * sum(1 for c in mine.hand if c and db.name(c.code) in profile.key_cards)
     deck = mine.deck_count or sum(1 for c in mine.deck if c)
     # LP terms grow up to 4x as our Deck runs out (urgency_deck=30: from 30 cards down) - a deck that mills
     # itself must close the game before it decks out, so damage and attacking matter more late.

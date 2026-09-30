@@ -111,3 +111,15 @@ def test_dad_progress_wants_exactly_three_darks():
              if DB.row(c)[4] & 0x1 and DB.row(c)[9] & 0x20]
     two, three, four = (prog(board(grave=darks[:k]), board(), DB) for k in (2, 3, 4))
     assert two < three and four < three, "exactly 3 is best; a 4th DARK is penalized"
+
+
+def test_hold_scale_follows_the_board():
+    from agents.lookahead import Weights, hold_scale
+    w = Weights()
+    mon = lambda atk, status=0: NS(code=1, position=0x1, attack=atk, status=status)
+    side = lambda *m: NS(monsters=list(m))
+    assert hold_scale(side(mon(2000)), side(mon(1000)), w) == 1.0, "ahead: full value"
+    assert hold_scale(side(mon(1000)), side(mon(2500)), w) == 0.5, "1500 behind of 3000: half"
+    assert hold_scale(side(), side(mon(1500), mon(1500)), w) == 0.0, "3000 behind: none"
+    assert hold_scale(side(mon(2800)), side(mon(2700, 0x40000000)), w) == 1.0, "new monster, but ours is bigger"
+    assert hold_scale(side(mon(2500), mon(2000)), side(mon(2700, 0x40000000)), w) == 0.0, "new bigger threat: none"

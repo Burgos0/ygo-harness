@@ -421,3 +421,20 @@ making the simulation worse.
 
 Nearly half of Blackwing-DAD's lost games end with a trap still set. The holding value added in c62c3c6
 makes that slightly more common, not less.
+
+## Holding value scaled by board state (2026-09-29)
+
+`hold_scale()` in `agents/lookahead.py`: our holding value (set cards, traps/quick-plays in hand, key
+cards) is full when even or ahead on board, shrinks linearly to 0 at 3000 face-up ATK behind, and is
+0 while facing a monster the opponent Summoned this turn with ATK >= 2000 and above our best.
+
+Checked first: in match137 game2 turn 14 the Blackwing-DAD pilot *was* offered Solemn Judgment on
+Lightsworn's Synchro Summon of Thought Ruler Archfiend (and on Chaos Sorcerer, Plaguespreader Zombie),
+searched, and passed: 87.5 vs 14.5. Rescored at the same position (captured from 244cbee) with the
+change: 47.5 vs 14.5 - still a pass; Solemn's half-LP cost outweighs the 2700 ATK removed.
+
+Vs random, 200 duels: Lightsworn 97.5%, Blackwing-DAD 100.0%, 0 rejected. 200 Bo3 on the same seeds as
+the 67.0% (new vs new) run: Lightsworn **60.0% [53.1, 66.5]** vs 45.1% real; paired, 28 matches flipped
+to Blackwing-DAD and 14 to Lightsworn (sign test p = 0.044). Blackwing-DAD traps: activated in 14.7% of
+trap windows (11.6%), Special Summons answered 33% (13%), attacks 42% (35%); Solemn Judgment 108 uses
+(79), Trap Dustshoot 82 (55); lost games ending with a trap still set 40% (48%).
