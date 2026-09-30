@@ -14,7 +14,6 @@ import argparse
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,7 +65,8 @@ def main() -> int:
         results = [play(i) for i in range(args.duels)]
         elapsed = time.perf_counter() - t
     else:
-        with ProcessPoolExecutor(args.workers, initializer=_init, initargs=(args.edison,)) as pool:
+        from edison.pool import worker_pool
+        with worker_pool(args.workers, initializer=_init, initargs=(args.edison,)) as pool:
             list(pool.map(play, range(args.workers)))  # warm every worker before timing
             t = time.perf_counter()
             results = list(pool.map(play, range(args.duels), chunksize=8))

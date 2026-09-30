@@ -15,17 +15,17 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import multiprocessing as mp
 import os
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from edison import pilots  # noqa: E402
+from edison.pool import worker_pool  # noqa: E402
 from edison.topdeck.matchups import wilson  # noqa: E402
 
 FLAG_POINTS = 15.0
@@ -86,8 +86,7 @@ def main() -> int:
     progress = pilots.Progress(args.matches, every=20, unit="matches")
     if args.deck_variant:
         print(f"decklists: edison/decks/<deck>_{args.deck_variant}.ydk")
-    with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init,
-                             initargs=(args.deck_variant,)) as pool, \
+    with worker_pool(args.workers, initializer=pilots.init, initargs=(args.deck_variant,)) as pool, \
             open(out_dir / "matches.jsonl", "w") as log:
         futures = [pool.submit(play_match, m, a, b, not args.no_respond) for m in range(args.matches)]
         for f in as_completed(futures):

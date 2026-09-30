@@ -64,6 +64,8 @@ tests** — see trap 11.
 | `scripts/deliberation_report.py` | planner/executor split, measured on free random duels |
 | `scripts/lethal_audit.py` | battle-phase misses, with the seed+turn to go watch |
 | `docs/PLAN.md`, `DECISIONS.md` | plan, and the record of decisions/deferrals |
+| `docs/STATUS.md` | where the Edison work stands, next step, exit criteria, exact commands |
+| `edison/pool.py` | worker pool that never leaves workers behind (Ctrl+C, SIGTERM, errors) |
 | `docs/EXPERIMENTS.md` | what has actually been measured, and what failed |
 | `docs/RELATED.md` | YGO-Bench and the other harnesses; what we do differently |
 

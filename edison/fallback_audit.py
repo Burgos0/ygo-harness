@@ -16,7 +16,7 @@ import multiprocessing as mp
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -161,7 +161,8 @@ def main() -> int:
     jobs = ([(_vs_random, (i, p)) for p in ("lightsworn", "blackwing_dad") for i in range(args.duels)]
             + [(_match, m) for m in range(args.matches)])
     t, results = time.perf_counter(), []
-    with ProcessPoolExecutor(mp.cpu_count(), mp_context=mp.get_context("spawn"), initializer=_patch) as pool, \
+    from edison.pool import worker_pool
+    with worker_pool(mp.cpu_count(), initializer=_patch) as pool, \
             open(out, "w") as log:
         futs = [pool.submit(f, a) for f, a in jobs]
         for n, f in enumerate(as_completed(futs), 1):

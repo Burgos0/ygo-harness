@@ -13,17 +13,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import multiprocessing as mp
 import os
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from edison import pilots  # noqa: E402
+from edison.pool import worker_pool  # noqa: E402
 
 
 def _play(i: int, profile: str, export: bool = False, respond: bool = True) -> dict:
@@ -49,7 +49,7 @@ def main() -> int:
 
     results = []
     progress = pilots.Progress(args.duels)
-    with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init) as pool, \
+    with worker_pool(args.workers, initializer=pilots.init) as pool, \
             open(out_dir / "duels.jsonl", "w") as log:
         futures = [pool.submit(_play, i, args.profile, False, not args.no_respond) for i in range(args.duels)]
         for f in as_completed(futures):
