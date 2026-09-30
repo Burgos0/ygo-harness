@@ -68,7 +68,8 @@ BLACKWING_DAD = Profile(
 # Kept for attribution runs (one side on the old evaluation, the other on the new). v1 = the current
 # score() with every term added in c62c3c6 at zero weight, and the progress bonuses as they were then.
 
-_V1_OFF = dict(gy_resource=0.0, hold=0.0, key_card=0.0, op_board_atk=0.0, lethal_threat=0.0, low_lp=0.0)
+_V1_OFF = dict(gy_resource=0.0, hold=0.0, key_card=0.0, op_board_atk=0.0, lethal_threat=0.0, low_lp=0.0,
+               lp_curve=False, hidden_hand=0.0, reveal=0.0)
 
 
 def _judgment_dragon_v1(mine, theirs, db) -> float:

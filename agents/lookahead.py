@@ -32,6 +32,7 @@ Phase triggers may fire again in the copy; the opponent is passive in every copy
 """
 from __future__ import annotations
 
+import math
 import random
 import re
 import struct
@@ -50,8 +51,9 @@ from engine.constants import (LOCATION_DECK, LOCATION_HAND, LOCATION_MZONE, LOCA
                               MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
                               MSG_SELECT_EFFECTYN, MSG_SELECT_IDLECMD, MSG_SELECT_POSITION,
                               MSG_SELECT_YESNO, MSG_SPSUMMONING, MSG_SUMMONING, MSG_WIN, PHASE_END,
-                              PHASE_MAIN2, PHASE_NAMES, TYPE_MONSTER, TYPE_NORMAL, TYPE_QUICKPLAY,
-                              TYPE_SYNCHRO, TYPE_TRAP, TYPE_TUNER)
+                              MSG_CONFIRM_CARDS, PHASE_MAIN2, PHASE_NAMES, TYPE_FUSION, TYPE_LINK,
+                              TYPE_MONSTER, TYPE_NORMAL, TYPE_QUICKPLAY, TYPE_SYNCHRO, TYPE_TRAP, TYPE_TUNER,
+                              TYPE_XYZ)
 from engine.duel import Duel
 from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTLE_TO_M2, IDLE_ACTIVATE,
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
@@ -89,9 +91,26 @@ class Weights:
     op_board_atk: float = 1 / 40     # per point of the opponent's face-up ATK (subtracted): so removing a
                                      # strong monster 1-for-1 is a gain and a weak one is not
     lethal_threat: float = 250.0     # the opponent's face-up ATK already reaches our LP
-    low_lp: float = 60.0             # per 1000 LP we are below low_lp_line (near-lethal)
+    low_lp: float = 0.0              # per 1000 LP below low_lp_line - superseded by lp_curve, kept for v1
     low_lp_line: int = 2000
-    my_lp: float = 0.03              # per LP of ours
+    my_lp: float = 0.03              # per LP of ours, when lp_curve is off (v1)
+    # Our LP as a nonlinear resource: worth lp_value * (1 - exp(-t / lp_tau)), t = LP / the opponent's
+    # visible damage per turn (their face-up ATK, at least lp_floor_damage). Paying LP far from lethal
+    # costs little; near lethal it costs a lot.
+    lp_curve: bool = True
+    lp_value: float = 300.0
+    lp_tau: float = 1.0
+    lp_floor_damage: int = 1000
+    # Hidden cards: each unknown card in the opponent's hand is worth this on top of `card` (what it
+    # might be - a hand trap, a key card - the same as our own holding value), so removing or shuffling
+    # one away is not a neutral 1-for-1. Seeing their hand is worth `reveal`.
+    hidden_hand: float = 40.0
+    reveal: float = 20.0
+    # Threat of an opposing monster, in ATK points on top of its ATK (scored at op_board_atk):
+    threat_extra: float = 800.0      # Summoned from the Extra Deck (Synchro, Fusion, Xyz, Link)
+    threat_field_effect: float = 600.0   # has an effect that works on the field (script: an MZONE range)
+    threat_boss: float = 400.0       # Main Deck monster of level >= boss_level
+    boss_level: int = 7
     op_lp: float = 0.06              # per LP of theirs (subtracted): 1000 LP = 60 ~ a 1600 direct attack
     board_atk: float = 1 / 40        # per point of face-up ATK: 1000 = 25
     per_monster: float = 15.0        # per monster we control, up to monster_cap
@@ -277,19 +296,51 @@ class GraveResources:
     qualify; Sangan (fires on the way to the GY) does not.
     """
     GY_RANGE = re.compile(rb"SetRange\([^)]*LOCATION_GRAVE")
+    FIELD_RANGE = re.compile(rb"SetRange\([^)]*LOCATION_MZONE")
 
     def __init__(self, scripts):
-        self.scripts, self.cache = scripts, {}
+        self.scripts, self.cache, self.field_cache = scripts, {}, {}
+
+    def _body(self, code: int) -> bytes:
+        read = getattr(self.scripts, "source", self.scripts.read)   # source text, not compiled bytecode
+        return read(f"c{code}.lua") or b""
 
     def __call__(self, code: int) -> bool:
         if code not in self.cache:
-            read = getattr(self.scripts, "source", self.scripts.read)   # source text, not compiled bytecode
-            body = read(f"c{code}.lua") or b""
-            self.cache[code] = bool(self.GY_RANGE.search(body))
+            self.cache[code] = bool(self.GY_RANGE.search(self._body(code)))
         return self.cache[code]
+
+    def field_effect(self, code: int) -> bool:
+        """Has an effect that works while it is on the field (ignition, quick or continuous, MZONE range)."""
+        if code not in self.field_cache:
+            self.field_cache[code] = bool(self.FIELD_RANGE.search(self._body(code)))
+        return self.field_cache[code]
 
 
 STATUS_SUMMONED_THIS_TURN = 0x800 | 0x40000000     # STATUS_SUMMON_TURN | STATUS_SPSUMMON_TURN
+EXTRA_DECK_TYPES = TYPE_SYNCHRO | TYPE_FUSION | TYPE_XYZ | TYPE_LINK
+
+
+def reveals_hand(m, player: int) -> bool:
+    """MSG_CONFIRM_CARDS showing at least one card from `player`'s hand."""
+    if m.id != MSG_CONFIRM_CARDS or len(m.payload) < 5:
+        return False
+    (n,) = struct.unpack_from("<I", m.payload, 1)
+    return any(m.payload[5 + 10 * i + 4] == player and m.payload[5 + 10 * i + 5] == LOCATION_HAND
+               for i in range(n) if 5 + 10 * i + 10 <= len(m.payload))
+
+
+def threat(c, w: Weights, gy) -> float:
+    """An opposing face-up monster's threat in ATK points: its ATK, plus what it is beyond a body - an
+    Extra Deck boss, an effect that works on the field, a high-level Main Deck boss."""
+    t = c.attack
+    if c.type & EXTRA_DECK_TYPES:
+        t += w.threat_extra
+    elif c.level >= w.boss_level:
+        t += w.threat_boss
+    if getattr(gy, "field_effect", None) and gy.field_effect(c.code):
+        t += w.threat_field_effect
+    return t
 
 
 def hold_scale(mine, theirs, w: Weights) -> float:
@@ -317,7 +368,7 @@ def card_advantage(mine, theirs, gy, hidden_opp_hand: int = 0, hidden_opp_set: i
 
 
 def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hidden_opp_set: int,
-          extra_levels: tuple, attacks: int = 0, gy=lambda code: False) -> float:
+          extra_levels: tuple, attacks: int = 0, gy=lambda code: False, revealed: bool = False) -> float:
     w = profile.weights
     fi = query_field(duel)
     mine, theirs = read_board(duel, me), read_board(duel, 1 - me)
@@ -343,16 +394,26 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     scale = hold_scale(mine, theirs, w)
     s += w.hold * (scale * held - op_set)
     s += scale * w.key_card * sum(1 for c in mine.hand if c and db.name(c.code) in profile.key_cards)
+    # Unknown cards in their hand are worth more than a card count; seeing them is worth something too.
+    s -= w.hidden_hand * (hidden_opp_hand + sum(1 for c in theirs.hand if c))
+    if revealed:
+        s += w.reveal
     deck = mine.deck_count or sum(1 for c in mine.deck if c)
     # LP terms grow up to 4x as our Deck runs out (urgency_deck=30: from 30 cards down) - a deck that mills
     # itself must close the game before it decks out, so damage and attacking matter more late.
     urgency = 1.0 + max(0, w.urgency_deck - deck) / (w.urgency_deck / 3.0) if w.urgency_deck else 1.0
-    s += urgency * (w.my_lp * my_lp - w.op_lp * op_lp)
+    their_atk = sum(c.attack for c in theirs.monsters if c and c.position & 0x5)
+    if w.lp_curve:   # LP measured in turns of the opponent's visible damage: cheap far from lethal
+        turns = my_lp / max(w.lp_floor_damage, their_atk)
+        my_lp_value = w.lp_value * (1.0 - math.exp(-turns / w.lp_tau))
+    else:
+        my_lp_value = w.my_lp * my_lp
+    s += urgency * (my_lp_value - w.op_lp * op_lp)
     face_up = [c for c in my_mons if c.position & 0x5]
     s += sum(c.attack for c in face_up) * w.board_atk + w.per_monster * min(len(my_mons), w.monster_cap)
     s -= w.overcommit * max(0, len(my_mons) - w.monster_cap)   # don't overcommit into mass removal
-    their_atk = sum(c.attack for c in theirs.monsters if c and c.position & 0x5)
-    s -= their_atk * w.op_board_atk
+    # Their board, threat-weighted: removing or negating a boss is worth more than its ATK alone.
+    s -= sum(threat(c, w, gy) for c in theirs.monsters if c and c.position & 0x5) * w.op_board_atk
     # Lethal / near-lethal: their visible attackers already reach our LP, or our LP is low.
     if their_atk >= my_lp:
         s -= w.lethal_threat
@@ -695,6 +756,7 @@ class LookaheadPilot:
                         roll.turn.number, roll.turn.player = 1, m.payload[0]
                         continue
                     roll.turn.observe(m.id, m.payload)
+                    roll.revealed = roll.revealed or reveals_hand(m, 1)
                     if m.id == MSG_WIN or (m.id == MSG_NEW_TURN and roll.turn.number > 1):
                         roll.done = True
                 return batch
@@ -709,7 +771,7 @@ class LookaheadPilot:
             if not roll.applied or roll.missed_choice:
                 return float("-inf")
             return score(d, 0, self.db, self.profile, snap["hidden_hand"], snap["hidden_set"], snap["extra_levels"],
-                         attacks=roll.attacks, gy=self.gy)
+                         attacks=roll.attacks, gy=self.gy, revealed=roll.revealed)
 
 
 class _Rollout:
@@ -719,6 +781,7 @@ class _Rollout:
         self.pilot, self.kind, self.key = pilot, kind, key
         self.picks, self.choice, self.prompts = list(picks), choice, 0
         self.attacks, self.missed_choice = 0, False
+        self.revealed = False   # the opponent's hand was shown during this line
         real = snap["turn"]
         self.turn = Turn(normal_summoned=real.normal_summoned,
                          monster_effects_used=set(real.monster_effects_used), attacked=set(real.attacked))
@@ -863,6 +926,7 @@ class Fork:
         self.rules = Rules(pilot.me, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile)
         self.other = RandomLegal(seed=pilot.rng.randrange(1 << 30))
         self.candidate = None
+        self.revealed = False
 
     # the scrub, as Lua run inside the fork
     def scrub_lua(self) -> str:
@@ -927,6 +991,7 @@ class Fork:
                     for m in batch:
                         if m.id in (MSG_WIN, MSG_NEW_TURN):
                             self.done = True
+                        self.revealed = self.revealed or reveals_hand(m, 1 - p.me)
                 return batch
             f._messages = watched
             f.start()
@@ -941,7 +1006,7 @@ class Fork:
             b = read_board(f, p.me)
             levels = tuple(sorted({row[7] & 0xFF for c in b.extra if c and (row := p.db.row(c.code))
                                    and row[4] & TYPE_SYNCHRO}))
-            return score(f, p.me, p.db, p.profile, 0, 0, levels, gy=p.gy)
+            return score(f, p.me, p.db, p.profile, 0, 0, levels, gy=p.gy, revealed=self.revealed)
 
     def __call__(self, msg, duel):
         if self.fed < len(self.log):          # replaying the real duel up to the prompt

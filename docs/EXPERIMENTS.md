@@ -438,3 +438,36 @@ the 67.0% (new vs new) run: Lightsworn **60.0% [53.1, 66.5]** vs 45.1% real; pai
 to Blackwing-DAD and 14 to Lightsworn (sign test p = 0.044). Blackwing-DAD traps: activated in 14.7% of
 trap windows (11.6%), Special Summons answered 33% (13%), attacks 42% (35%); Solemn Judgment 108 uses
 (79), Trap Dustshoot 82 (55); lost games ending with a trap still set 40% (48%).
+
+## Tuning round 1: hidden-card removal, nonlinear LP, threat-weighted removal (2026-09-30)
+
+Three generic terms in `score()` (no card names); v1 profiles switch all three off.
+1. **Hidden cards:** each unknown card in the opponent's hand is worth `hidden_hand` = 40 on top of a
+   card, so removing or shuffling one away is not a neutral 1-for-1; +`reveal` = 20 when their hand
+   is shown (a `MSG_CONFIRM_CARDS` of their hand during the copy/fork).
+2. **LP curve:** our LP is worth 300 * (1 - exp(-t)), t = LP / the opponent's visible face-up ATK
+   (at least 1000) - paying 4000 of 8000 against a 1000 board costs ~5, 1500 of 3000 against 2700
+   costs ~95. Replaces the linear term and the low-LP penalty.
+3. **Threat:** an opposing monster counts ATK + 800 if from the Extra Deck, + 600 if its script has
+   an on-field (MZONE) effect, + 400 if a level 7+ Main Deck monster (scored at 1/40 per point).
+
+**Pass check** (match137 game2, turn 14, the same positions captured from 244cbee):
+
+| Window (Solemn Judgment offered) | 1810865: pass vs activate | now: pass vs activate |
+|---|---|---|
+| Chaos Sorcerer, Special Summon | 232.5 vs 149.5 - pass | 180.2 vs **218.5 - negate** |
+| Plaguespreader Zombie, Normal Summon | -2.5 vs -143.0 - pass | -23.6 vs -108.4 - pass |
+| Thought Ruler Archfiend, Synchro | 47.5 vs 14.5 - pass | 6.4 vs **123.5 - negate** |
+
+**Regression vs random, 200 duels:** Lightsworn 97.5% (unchanged), Blackwing-DAD 99.5% (100.0%);
+0 rejected, 0 failed forks.
+
+**200 Bo3, same seeds as the 60.0% run:** Lightsworn **65.5% [58.7, 71.7]** vs 45.1% real. Paired:
+36 matches flipped to Lightsworn, 25 to Blackwing-DAD (sign test p = 0.20) - not distinguishable
+from the 60.0% run.
+
+Activations, 60.0% run -> now: Blackwing-DAD's traps in 14.7% -> 25.1% of trap windows (2.40 -> 2.51
+per game); Solemn Judgment 108 -> 164, Trap Dustshoot 82 -> 116, Gorz 12 -> 21, Dimensional Prison
+255 -> 234, others within noise. Lightsworn: Trap Dustshoot 12 -> **71** - the hidden-card term applies
+to both decks, and Lightsworn plays Dustshoot too - traps 0.32 -> 0.42 per game. Blackwing-DAD lost
+games ending with a trap still set: 40% -> 35%.

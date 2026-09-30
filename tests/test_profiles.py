@@ -1,5 +1,6 @@
 """Deck profiles for the generic lookahead pilot."""
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -123,3 +124,34 @@ def test_hold_scale_follows_the_board():
     assert hold_scale(side(), side(mon(1500), mon(1500)), w) == 0.0, "3000 behind: none"
     assert hold_scale(side(mon(2800)), side(mon(2700, 0x40000000)), w) == 1.0, "new monster, but ours is bigger"
     assert hold_scale(side(mon(2500), mon(2000)), side(mon(2700, 0x40000000)), w) == 0.0, "new bigger threat: none"
+
+
+def test_threat_counts_extra_deck_bosses_and_field_effects():
+    from agents.lookahead import Weights, threat
+    w, gy = Weights(), GraveResources(EdisonScriptProvider())
+    THOUGHT_RULER, CHAOS_SORCERER, PLAGUESPREADER = 70780151, 9596126, 33420078
+    mon = lambda code, atk, typ, lv: NS(code=code, attack=atk, type=typ, level=lv)
+    tra = threat(mon(THOUGHT_RULER, 2700, 0x2021, 8), w, gy)
+    cs = threat(mon(CHAOS_SORCERER, 2300, 0x21, 6), w, gy)
+    assert tra == 2700 + w.threat_extra + w.threat_field_effect, "Synchro with an on-field effect"
+    assert cs == 2300 + w.threat_field_effect, "Main Deck, an ignition effect on the field, not a boss by level"
+    assert threat(mon(PLAGUESPREADER, 400, 0x1021, 2), w, gy) == 400, "its effect is used from the GY"
+
+
+def test_reveals_hand_reads_confirm_cards():
+    from agents.lookahead import reveals_hand
+    msg = lambda cards: NS(id=31, payload=bytes([0]) + struct.pack("<I", len(cards))
+                           + b"".join(struct.pack("<IBBI", c, con, loc, 0) for c, con, loc in cards))
+    assert reveals_hand(msg([(1, 1, 0x02)]), 1), "one of player 1's hand cards shown"
+    assert not reveals_hand(msg([(1, 1, 0x04)]), 1), "a monster zone card is not the hand"
+    assert not reveals_hand(msg([(1, 0, 0x02)]), 1), "the other player's hand"
+
+
+def test_lp_cost_is_cheap_far_from_lethal_and_dear_near_it():
+    import math
+    from agents.lookahead import Weights
+    w = Weights()
+    v = lambda lp, dmg: w.lp_value * (1 - math.exp(-(lp / max(w.lp_floor_damage, dmg)) / w.lp_tau))
+    far = v(8000, 1000) - v(4000, 1000)
+    near = v(3000, 2700) - v(1500, 2700)
+    assert far < 10 < 60 < near, (far, near)
