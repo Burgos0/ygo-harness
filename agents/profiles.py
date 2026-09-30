@@ -132,6 +132,52 @@ BLACKWING_DAD = Profile(
     hold_factor=(("Icarus Attack", 0.5),),
 )
 
+# ---------------------------------------------------------------- Blackwing (pure) (docs/guides/blackwing.md)
+
+WHIRLWIND = "Black Whirlwind"
+SHURA = "Blackwing - Shura the Blue Flame"
+
+
+def _blackwing(mine, theirs, db, ctx=None) -> float:
+    """Pure Blackwing's setup progress: the shared Blackwing terms (Vayu engine, exactly-3 DARKs for its one
+    Dark Armed Dragon) plus Black Whirlwind on the field (guide 1) and a Shura that can win a battle
+    (guide 4: its trigger Special Summons a Blackwing <= 1500 ATK - often a Tuner - from the Deck)."""
+    s = _blackwing_dad(mine, theirs, db, ctx)
+    if any(c and c.position & 0x5 and db.name(c.code) == WHIRLWIND for c in mine.spells):
+        s += 80.0
+    shura = [c for c in mine.monsters if c and c.position & 0x1 and db.name(c.code) == SHURA]
+    if shura:
+        # what an attacker must beat: ATK in Attack Position, DEF in Defense, the typical DEF if face-down
+        walls = [c.attack if c.position & 0x1 else c.defense if c.position & 0x4 else 500
+                 for c in theirs.monsters if c]
+        if any(max(x.attack for x in shura) > w for w in walls):
+            s += 30.0
+    return s
+
+
+BLACKWING = Profile(
+    name="Blackwing",
+    deck="edison/decks/blackwing.ydk",
+    # Beatdown: no self-mill, LP terms flat.
+    weights=Weights(urgency_deck=0),
+    # Black Whirlwind is the engine (guide 1): activated first, never cut.
+    engine=frozenset({WHIRLWIND}),
+    discard_first=("Blackwing - Blizzard the Far North",),
+    search_archetype="Blackwing",
+    hold=frozenset({DD_CROW}),
+    # Worth more in hand than on the field: Bora for a Whirlwind search or the winning attack (guide 2),
+    # Kalut for the battle that matters (guide 3); Gorz and Dark Armed Dragon as in Blackwing-DAD.
+    key_cards=frozenset({"Blackwing - Bora the Spear", "Blackwing - Kalut the Moon Shadow",
+                         "Gorz the Emissary of Darkness", "Dark Armed Dragon"}),
+    progress=_blackwing,
+    # Gale's halving (guide 5), Sirocco's one big attack (guide 6), Vayu: always in the Main Phase search.
+    always_consider=frozenset({"Blackwing - Gale the Whirlwind", "Blackwing - Sirocco the Dawn", VAYU}),
+    # Icarus Attack: spare monsters into removal (guide 7) - half holding value, as in Blackwing-DAD; the
+    # doomed-monster Tribute is the generic rule.
+    hold_factor=(("Icarus Attack", 0.5),),
+)
+
+
 # ---------------------------------------------------------------- v1: the evaluation before c62c3c6
 # Kept for attribution runs (one side on the old evaluation, the other on the new). v1 = the current
 # score() with every term added in c62c3c6 at zero weight, and the progress bonuses as they were then.
@@ -162,5 +208,5 @@ LIGHTSWORN_V1 = replace(LIGHTSWORN, weights=Weights(**_V1_OFF), key_cards=frozen
 BLACKWING_DAD_V1 = replace(BLACKWING_DAD, weights=Weights(urgency_deck=0, **_V1_OFF), key_cards=frozenset(),
                            progress=_dark_armed_dragon_v1)
 
-PROFILES = {"lightsworn": LIGHTSWORN, "blackwing_dad": BLACKWING_DAD,
+PROFILES = {"lightsworn": LIGHTSWORN, "blackwing_dad": BLACKWING_DAD, "blackwing": BLACKWING,
             "lightsworn@v1": LIGHTSWORN_V1, "blackwing_dad@v1": BLACKWING_DAD_V1}

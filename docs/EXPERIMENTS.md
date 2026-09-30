@@ -597,5 +597,44 @@ than a Lightsworn deck), and player-skill selection in the real data. Step 4 sho
 Zones (`MSG_SELECT_PLACE` / `DISFIELD`) are answered by `Rules.place_rule` (lowest free zone) in the
 real duel too; one-at-a-time picks, Tributes and numbers stay searched. Vs random, 200 duels: Lightsworn
 97.5%, Blackwing-DAD 98.5% (both unchanged), 0 fallbacks, 0 rejected. 200 Bo3 same seeds: Lightsworn
-**62.5% [55.6, 68.9]** vs 63.0% with zone search - within noise (paired p above). **29.8 -> 41.9
+**62.5% [55.6, 68.9]** vs 63.0% with zone search - within noise (paired: 26 flipped to Lightsworn, 27 to
+Blackwing-DAD, p = 1.00). **29.8 -> 41.9
 matches/min.**
+
+## Step 4: pilot #3, Blackwing (pure) (2026-09-30)
+
+**Decklist:** `edison/decks/blackwing.ydk` - 2nd of 385 at LDS Las Vegas Edison (2026-05-09), **12-1-0**,
+the most match wins of the 511 legal pure Blackwing lists in the TopDeck data (next: 10-1-0, 5th of
+319 at RBET Paris). 40 main / 15 extra / 15 side, validated by `edison/deck.py`. It runs 2 Black
+Whirlwind, 3 each of Bora, Kalut, Shura, Sirocco, Blizzard and Icarus Attack, 1 Gale, 1 Vayu, 1 Dark
+Armed Dragon.
+
+**Profile** (`BLACKWING`, guide in `docs/guides/blackwing.md`; no new hooks needed): Black Whirlwind is
+the engine (activated first, never cut) and +80 while face-up on our field; Bora, Kalut, Gorz and DAD
+are key cards (holding value in hand, so the search Summons the least important Blackwing and keeps
+Kalut for the damage step, where the battle-window search can play it); Gale, Sirocco and Vayu are always
+in the Main Phase search; +30 for a Shura in Attack Position that can win a battle; Icarus Attack at half
+holding value; the Blackwing-DAD terms (Vayu engine, exactly 3 DARKs) carry over. Not modelled: the
+opponent's Gorz / Tragoedia punishing several attacks (the lookahead's opponent is passive), which is
+the case the guide gives for Sirocco.
+
+**Checkpoint, 200 duels vs random-legal:** **99.5% [97.2, 99.9]** (first 100/100, second 99/100),
+0 rejected answers, 0 random-fallback answers (real duel and lookahead), 0 failed forks.
+
+**200 Bo3 each** (Blackwing's match win; real = TopDeck.gg, Blackwing's row):
+
+| Matchup | Simulated | Real | Gap |
+|---|---|---|---|
+| Blackwing vs Lightsworn | **80.5% [74.5, 85.4]** (161-39) | 54.3% [49.2, 59.3] (n=376) | +26.2 - flagged |
+| Blackwing vs Blackwing-DAD | **83.5% [77.7, 88.0]** (167-33) | 48.6% [44.5, 52.7] (n=580) | +34.9 - flagged |
+
+Card advantage at turn 5: +0.57 vs Lightsworn, +0.51 vs Blackwing-DAD. Going first won 48.3% / 50.0% of
+games. 0 random fallbacks and 0 rejected answers for every pilot.
+
+Reading it: the new pilot beats both older ones by far more than the real data says, including the
+near-mirror against Blackwing-DAD, which shares most of its monsters. Two suspects beyond the known
+biases, neither tested: **deck quality** - this list is a 12-1 top finisher, while Blackwing-DAD's list
+is simply the first legal Blackwing-DAD list in the data (Lightsworn's is a consensus build) - and the
+Whirlwind engine, which the lookahead values well because it pays off on our own turn, where the pilot
+searches best. A list-quality control (Blackwing-DAD re-drawn from its best record, the same way) would
+separate the first from the second.
