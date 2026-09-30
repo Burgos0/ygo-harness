@@ -292,3 +292,51 @@ rounds of replay review and scenario tests, the Blackwing-DAD profile none; and 
 trap/control deck whose value is mostly on the *opponent's* turn, where the pilot does no search at
 all (fixed rule: activate the first chainable card). A pilot-vs-pilot number measures the pilots
 until both are shown to play their deck competently; it should not be read as a deck result.
+
+## Response search: the opponent's turn searched too (2026-09-29)
+
+Same conditions as above. No profile was tuned. `LookaheadPilot(respond_search=True)` searches every
+prompt on the opponent's turn and every chain window / yes-no in any Battle Phase - pass vs each legal
+response, then each target - on forks of the real duel (see `DECISIONS.md`). `--no-respond` gives the
+old fixed rule ("activate the first chainable card on the opponent's turn") and reproduces the earlier
+numbers exactly (95.5% vs random, 81.0% in the matchup, same W-L), which is the before/after control.
+
+**Regression vs random-legal, 200 duels each** (limit: no drop over 3 points):
+
+| Pilot | Before | After | Rejected | Forks/duel (failed) |
+|---|---|---|---|---|
+| Lightsworn | 97.0% [93.6, 98.6] | **99.0%** [96.4, 99.7] | 0 | 11 (0) |
+| Blackwing-DAD | 95.5% [91.7, 97.6] | **99.5%** [97.2, 99.9] | 0 | 72 (0) |
+
+**Lightsworn vs Blackwing-DAD, 500 Bo3, same keys/seeds as the v0 run:**
+
+| | Lightsworn match win [95% CI] | W-L | Games | Going first won |
+|---|---|---|---|---|
+| Real (TopDeck.gg) | 45.1% [40.4, 50.0] | 185-225 | - | - |
+| Before (fixed chain rule) | 81.0% [77.3, 84.2] | 405-95 | 1221 | 48.4% |
+| **After (response search)** | **58.8% [54.4, 63.0]** | 294-206 | 1280 | 55.0% |
+
+Gap to the real number: +35.9 -> **+13.7 points**, inside the 15-point flag. Going first became an
+advantage (48.4% -> 55.0% of games), which is the direction the real format has.
+
+**Blackwing-DAD's traps, in the matchup** (`python -m edison.response_report`):
+
+| | Before | After |
+|---|---|---|
+| Trap windows / game | 4.3 | 16.4 (traps are held, so they stay available) |
+| Traps activated / game | 2.48 | 2.25 |
+| Activated when offered | 57.8% | 13.7% |
+| ...on an attack declaration | 60% (742/1240) | 42% (1231/2904) |
+| ...at a bare phase change | 57% | 10% |
+| Share of activations answering an attack | 25% | **43%** |
+| Share in the opponent's Draw Phase | 52% | 35% |
+| Solemn Judgment / Torrential Tribute used | 325 / 292 | 146 / 218 |
+
+Before, the fixed rule spent traps at the first window - half of them in the opponent's Draw Phase,
+Solemn Judgment on the first thing it could negate. After, traps are mostly held for attacks. The Draw
+Phase activations that remain are largely Legacy of Yata-Garasu, Trap Dustshoot and Icarus Attack, where
+the score sees no reason to wait (it has no term for "this could be better later").
+
+Not fixed by this: the pilots still model a passive opponent (in forks and in copies), and 58.8% is
+still above the real 45.1% - the remaining gap is in range for profile tuning, which was deliberately
+not done here. n=500 matches per row; one run each.

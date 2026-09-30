@@ -29,17 +29,19 @@ from edison.topdeck.matchups import wilson  # noqa: E402
 FLAG_POINTS = 15.0
 
 
-def play_match(m: int, a: str, b: str) -> dict:
+def play_match(m: int, a: str, b: str, respond: bool = True) -> dict:
     first = a if m % 2 == 0 else b
     wins, games = Counter(), []
     for g in range(3):
         second = b if first == a else a
-        r = pilots.play(100_000 + 10 * m + g, (first, second), (first, second))
+        r = pilots.play(100_000 + 10 * m + g, (first, second), (first, second), respond=respond)
         winner = {0: first, 1: second}.get(r["winner"])
         wins[winner] += winner is not None
         games.append({"game": g + 1, "key": r["key"], "seeds": r["seeds"], "shuffles": r["shuffles"],
                       "first": first, "winner": winner, "reason": r["reason"], "turns": r["turns"],
-                      "retries": r["retries"], "rejected": r["rejected"], "seconds": round(r["seconds"], 2)})
+                      "retries": r["retries"], "rejected": r["rejected"], "seconds": round(r["seconds"], 2),
+                      "windows": {({0: first, 1: second}[int(s)]): w for s, w in r["windows"].items()},
+                      "forks": r["forks"]})
         if max(wins[a], wins[b]) == 2:
             break
         first = second if winner == first else (first if winner == second else second)
@@ -64,6 +66,7 @@ def main() -> int:
     ap.add_argument("--matches", type=int, default=500)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--tag", default="run")
+    ap.add_argument("--no-respond", action="store_true", help="pilots without response search (the old fixed rule)")
     args = ap.parse_args()
     a, b = args.a, args.b
     out_dir = ROOT / "runs" / f"matchup-{a}-vs-{b}-{args.tag}"
@@ -74,7 +77,7 @@ def main() -> int:
     progress = pilots.Progress(args.matches, every=20, unit="matches")
     with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init) as pool, \
             open(out_dir / "matches.jsonl", "w") as log:
-        futures = [pool.submit(play_match, m, a, b) for m in range(args.matches)]
+        futures = [pool.submit(play_match, m, a, b, not args.no_respond) for m in range(args.matches)]
         for f in as_completed(futures):
             r = f.result()
             results.append(r)
@@ -118,6 +121,7 @@ def main() -> int:
     rej = Counter((side, mid) for g in games for side, mid in g["rejected"])
     lines.append(f"rejected answers (engine retries) {sum(g['retries'] for g in games)}; traced (seat, msg): "
                  f"{dict(rej) or 'none'}")
+    lines.append(f"response search: forks/game {sum(g.get('forks', 0) for g in games) / len(games):.0f}")
     from engine.constants import WIN_REASON_DECKOUT, WIN_REASON_LP
     reasons = Counter({WIN_REASON_LP: "LP to 0", WIN_REASON_DECKOUT: "deck-out"}.get(g["reason"], f"other ({g['reason']})")
                       for g in games)

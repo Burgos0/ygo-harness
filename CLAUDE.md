@@ -260,6 +260,26 @@ error.
     something impossible, check what the planner was shown before concluding
     anything about the model.
 
+27. **The turn player's priority erases what a response window is about.**
+    At an attack declaration the engine asks the turn player first; answering
+    that clears `Duel.since_last_decision`, so by the time the other player's
+    `MSG_SELECT_CHAIN` arrives the `MSG_ATTACK` is gone and the window looks
+    like a bare phase change. The first trap-timing report put 0 of 78 trap
+    activations on attacks for this reason. Track the triggering event in the
+    policy's own message hook (`LookaheadPilot.event`), not from that buffer.
+
+28. **A fork of the real duel holds hidden information until it is scrubbed,
+    and the scrub card cannot be a Normal monster.** Response-prompt forks
+    replay the real duel from its log, so the opponent's hand, Deck and
+    face-down monsters and our own Deck order are all real in them.
+    `Fork.scrub_lua` rewrites them with `Card.Recreate(..., true)` before any
+    candidate is played. `card::replace_effect` returns early when the new
+    code is a Normal monster, so a vanilla filler keeps the hidden card's own
+    effects (a scrubbed Sangan would still search) - the filler is an inert
+    *effect* monster. Removed effects go to the core's deferred
+    `reseted_effects`, so pending triggers do not dangle.
+    `tests/test_response_search.py` guards both.
+
 ## Models
 
 See `llm/models.yaml`. Two findings worth not re-deriving:

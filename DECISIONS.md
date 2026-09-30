@@ -330,3 +330,23 @@ necessarily a deck-out race. Re-measured afterwards (`scripts/lethal_audit.py
 rather than deck-out. Only ten duels, so treat it as "the old number no longer
 reproduces" rather than as a new number. Split by turn order regardless - the
 reason to was never the size of the effect.
+
+## Response prompts are searched on forks of the real duel, not puzzle copies
+
+**Status:** decided 2026-09-29 (Edison pilots, `agents/lookahead.py`).
+
+The lookahead pilot's copies are puzzles rebuilt from what the pilot may know, and they start at a
+fresh Main Phase. A response prompt - an attack just declared, a chain link just made, a monster just
+summoned - cannot be expressed that way: the pending event is the whole point of the prompt. So a
+response prompt is searched on a *fork*: the real duel replayed from its seeds, dealt decks and
+response log (what a `.yrp` holds) up to the prompt. That rebuild contains hidden information, so it
+is scrubbed with `Card.Recreate` before any candidate is played (our Deck order permuted with the
+pilot's RNG; the opponent's hand, Deck and face-down monsters made an inert effect monster; the RNG
+advanced a pilot-chosen amount). Cost: about 100 ms per fork, almost all of it script loading - the
+same as a puzzle copy - and 0 of ~14,000 forks in the first runs failed to reach their prompt.
+
+Rejected: rebuilding the event inside a puzzle (replaying the opponent's visible actions into a copy
+with the seats swapped). It works for attacks but not for chains or Special Summons from effects, and
+it would need a shadow model of the turn built from the message stream, which the conventions forbid.
+Left unscrubbed, and documented in `Fork`: the opponent's face-down Spells/Traps (a passive opponent
+never activates them).

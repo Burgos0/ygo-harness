@@ -7,6 +7,13 @@
 Everything deck-specific - score weights, which cards are the engine, what to discard first, what to
 hold, a deck's own score terms - is a Profile (agents/profiles.py). This file knows no card names.
 
+Response search (respond_search=True): every prompt we answer on the opponent's turn, and every chain
+window / yes-no during any Battle Phase, is searched the same way - pass vs each legal response, and
+then each legal target (single-card choices). A puzzle copy cannot hold a pending attack or chain, so
+these copies are *forks*: the real duel replayed from its seeds and response log up to this prompt,
+then scrubbed of what we may not know before anything is played (see Fork). Every such prompt is
+logged in `self.windows` (available options, taken or passed, turn, phase, triggering event).
+
 Searched decisions: our Main Phase menu (summon / set / activate / change phase) and our Battle
 Phase menu (attack / activate / change phase). For each candidate the pilot builds a *copy* of the
 position, plays the candidate, lets fixed rules finish the turn, and scores the result. Everything
@@ -36,11 +43,13 @@ from pathlib import Path
 from agents.random_legal import RandomLegal
 from engine.board import query_field, read_board
 from engine.carddb import CardDB
-from engine.constants import (LOCATION_HAND, LOCATION_MZONE, LOCATION_SZONE, MSG_NEW_PHASE,
-                              MSG_NEW_TURN, MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
+from engine.constants import (LOCATION_DECK, LOCATION_HAND, LOCATION_MZONE, LOCATION_SZONE, MSG_ATTACK,
+                              MSG_CHAINING, MSG_FLIPSUMMONING, MSG_NEW_PHASE, MSG_NEW_TURN,
+                              MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
                               MSG_SELECT_EFFECTYN, MSG_SELECT_IDLECMD, MSG_SELECT_POSITION,
-                              MSG_SELECT_YESNO, MSG_WIN, PHASE_END, PHASE_MAIN2, TYPE_MONSTER,
-                              TYPE_SYNCHRO, TYPE_TUNER)
+                              MSG_SELECT_YESNO, MSG_SPSUMMONING, MSG_SUMMONING, MSG_WIN, PHASE_END,
+                              PHASE_MAIN2, PHASE_NAMES, TYPE_MONSTER, TYPE_NORMAL, TYPE_SYNCHRO, TYPE_TRAP,
+                              TYPE_TUNER)
 from engine.duel import Duel
 from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTLE_TO_M2, IDLE_ACTIVATE,
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
@@ -54,6 +63,14 @@ from engine.puzzle import Puzzle
 TYPICAL_FACEDOWN_DEF = 500
 PLACEHOLDER = 59053232     # Turu-Purun, vanilla 450/500: stands in for an unknown face-down monster
 FILLER = 15025844          # opponent's unknown Deck cards
+#: In a fork, the opponent's hidden cards become this card. It must be an *effect* monster - the core
+#: will not replace effects with a Normal monster's (card::replace_effect returns early), so a vanilla
+#: filler would keep the hidden card's own effects. Dark Grepher's only effects are a Special Summon
+#: procedure and an ignition effect, which a passive opponent never uses.
+INERT = 14536035
+BATTLE_PHASES = 0x08 | 0x10 | 0x20 | 0x40 | 0x80
+EVENTS = {MSG_ATTACK: "attack", MSG_CHAINING: "chain", MSG_SUMMONING: "summon", MSG_SPSUMMONING: "spsummon",
+          MSG_FLIPSUMMONING: "flipsummon"}
 
 
 @dataclass(frozen=True)
@@ -280,7 +297,7 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
 
 class LookaheadPilot:
     def __init__(self, profile: Profile, seat: int, seed: int = 0, max_candidates: int = 8, lib=None,
-                 carddb=None, scripts=None, flags: int | None = None):
+                 carddb=None, scripts=None, flags: int | None = None, respond_search: bool = True):
         from edison.duel import EDISON_FLAGS
         from edison.provider import EdisonScriptProvider
         self.me, self.profile = seat, profile
@@ -295,6 +312,11 @@ class LookaheadPilot:
         self.searches = self.copies = 0
         self._can_bp = False
         self.plan = None   # the last searched Main/Battle Phase action: its snapshot, key and card picks
+        self.respond_search = respond_search
+        self.responding = False   # we just took a searched response: its target choices are searched too
+        self.windows: list[dict] = []   # every response prompt: options, taken/passed, timing
+        self.forks = self.fork_failures = 0
+        self.event = "phase"
 
     def attach(self, duel) -> None:
         """Call before duel.start() so turn 1 is observed too (lazy hooking may miss it)."""
@@ -313,6 +335,13 @@ class LookaheadPilot:
             batch = read()
             for m in batch:
                 self.turn.observe(m.id, m.payload)
+                # What a response window answers: the last attack / summon / chain link, until the turn
+                # player next gets a free menu or the phase changes. Tracked here, not from the duel's
+                # since_last_decision - the turn player's own prompt (it has priority) clears that first.
+                if m.id in EVENTS:
+                    self.event = EVENTS[m.id]
+                elif m.id in (MSG_NEW_PHASE, MSG_NEW_TURN, MSG_SELECT_IDLECMD, MSG_SELECT_BATTLECMD):
+                    self.event = "phase"
             return batch
         duel._messages = observed
 
@@ -333,9 +362,79 @@ class LookaheadPilot:
                 self._in_battle, self._can_bp = True, False
                 return self._remember(self._search("battle", cmd, duel), None, cmd)
         self._in_battle = False
+        if msg.id in (MSG_SELECT_CHAIN, MSG_SELECT_EFFECTYN, MSG_SELECT_YESNO, MSG_SELECT_CARD) \
+                and msg.player == self.me:
+            r = self._response(msg, duel)
+            if r is not None:
+                return r
         if msg.id == MSG_SELECT_CARD and self.plan and self.turn.player == self.me:
             return self._choose_card(msg, duel)
         return self.rules.respond(msg, duel, self.turn)
+
+    # -- response prompts (opponent's turn, any Battle Phase)
+    def _response(self, msg, duel) -> bytes | None:
+        """Search a response prompt; None leaves it to the usual path. Logs every chain window."""
+        opp_turn = self.turn.player != self.me
+        battle = bool((duel.phase or 0) & BATTLE_PHASES)
+        if msg.id != MSG_SELECT_CARD:
+            self.responding = False
+        if msg.id != MSG_SELECT_CHAIN and not self.respond_search:
+            return None
+        if msg.id == MSG_SELECT_CARD:
+            if not (opp_turn or self.responding) or self.rules.attack_pending:
+                return None
+            sel = parse_select_card(msg.payload)
+            if not (sel.min == sel.max == 1 and 2 <= len(sel.codes) <= 12):
+                return None
+            cands = [(SelectCard.encode([i]), ("card", c, *(sel.places[i][:3] if sel.places else ())))
+                     for i, c in enumerate(sel.codes)]
+        elif msg.id == MSG_SELECT_CHAIN:
+            ch = parse_select_chain(msg.payload)
+            if not ch.options:
+                return None
+            cands, seen = [], set()
+            for i, o in enumerate(ch.options):
+                key = ("activate", o.code, o.location, o.sequence, o.description)
+                if o.code in self.profile.hold or key in seen:
+                    continue
+                seen.add(key)
+                cands.append((SelectChain.encode(i), key))
+            if ch.can_decline():
+                cands.append((SelectChain.decline(), ("pass",)))
+            if not (opp_turn or battle) or not self.respond_search or len(cands) < 2:
+                r = self.rules.chain(ch, not opp_turn)       # the fixed rule, as before response search
+                self._log_window(msg, duel, ch, r, searched=False)
+                return r
+        else:
+            if not (opp_turn or battle):
+                return None
+            cands = [(struct.pack("<i", 1), ("yes",)), (struct.pack("<i", 0), ("no",))]
+        self.searches += 1
+        best, best_score = None, float("-inf")
+        for response, key in cands:
+            sc = Fork(self, duel, msg).evaluate(response)
+            self.fork_failures += sc == float("-inf")
+            if sc > best_score:
+                best, best_score = response, sc
+        if best is None:   # every fork failed: the fixed rule
+            best = (self.rules.chain(parse_select_chain(msg.payload), not opp_turn) if msg.id == MSG_SELECT_CHAIN
+                    else self.rules.respond(msg, duel, self.turn))
+        r = best
+        if msg.id == MSG_SELECT_CHAIN:
+            self._log_window(msg, duel, parse_select_chain(msg.payload), r, searched=True)
+            self.responding = struct.unpack("<i", r)[0] >= 0
+        return r
+
+    def _log_window(self, msg, duel, ch, r: bytes, searched: bool) -> None:
+        i = struct.unpack("<i", r)[0]
+        event = self.event
+        types = [(self.db.row(o.code) or (0,) * 5)[4] for o in ch.options]
+        self.windows.append({
+            "turn": self.turn.number, "own_turn": self.turn.player == self.me,
+            "phase": PHASE_NAMES.get(duel.phase, str(duel.phase)), "event": event, "forced": ch.forced,
+            "options": [o.code for o in ch.options], "trap_options": sum(1 for t in types if t & TYPE_TRAP),
+            "taken": ch.options[i].code if 0 <= i < len(ch.options) else None,
+            "taken_trap": bool(0 <= i < len(ch.options) and types[i] & TYPE_TRAP), "searched": searched})
 
     def _choose_card(self, msg, duel) -> bytes:
         """A card choice during our turn (search, discard, revive target...): lookahead over the options.
@@ -633,3 +732,140 @@ class _Rollout:
                     self.applied = True
                     return BattleCmd.encode(BATTLE_ACTIVATE, i)
         return self._fail()
+
+
+# ------------------------------------------------------------------ forks: response prompts
+
+class Fork:
+    """The real duel replayed to the current prompt, scrubbed, then one candidate answer played out.
+
+    A puzzle copy starts at a fresh Main Phase and cannot hold a declared attack or an open chain, which is
+    exactly what a response prompt is about. So a fork rebuilds the real duel from its seeds, dealt decks
+    and response log (the same data a .yrp holds) and stops at this prompt. That rebuild necessarily
+    contains hidden information, so before any candidate is played it is scrubbed with Card.Recreate
+    (new identity *and* effects), drawing the same knowledge line as the puzzle copies:
+      * our Deck: contents known, order not -> the codes are permuted with the pilot's own RNG
+        (Normal and effect monsters separately: the core cannot move effects onto or off a Normal)
+      * the opponent's hand and Deck -> INERT (count kept, identity gone)
+      * the opponent's face-down monsters -> INERT at the typical face-down 450 ATK / 500 DEF
+      * the engine's RNG -> advanced a pilot-chosen number of steps, so the fork cannot foresee coin
+        tosses or shuffles in the real duel
+    Left alone: cards whose effect is on the chain right now (their effect is in use), and the opponent's
+    face-down Spells/Traps (the opponent is passive in a fork and never activates them).
+
+    After the candidate: our later prompts use the fixed rules but never start a new response, the
+    opponent declines everything optional, and the fork is scored when the turn player next gets a free
+    Main/Battle Phase menu, the turn ends, or the duel ends - i.e. once this event has played out.
+    """
+
+    STOP = (MSG_SELECT_IDLECMD, MSG_SELECT_BATTLECMD)
+
+    def __init__(self, pilot: "LookaheadPilot", duel, msg):
+        self.pilot, self.real, self.msg = pilot, duel, msg
+        self.log = list(duel.responses)
+        self.fed = 0
+        self.applied = self.done = self.desync = False
+        self.rules = Rules(pilot.me, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile)
+        self.other = RandomLegal(seed=pilot.rng.randrange(1 << 30))
+        self.candidate = None
+
+    # the scrub, as Lua run inside the fork
+    def scrub_lua(self) -> str:
+        me, op, db = self.pilot.me, 1 - self.pilot.me, self.pilot.db
+        codes = [c.code for c in read_board(self.real, me).deck if c]
+        normal = [c for c in codes if (db.row(c) or (0,) * 5)[4] & TYPE_NORMAL]
+        effect = [c for c in codes if c not in normal]
+        self.pilot.rng.shuffle(normal)
+        self.pilot.rng.shuffle(effect)
+        nil12 = ",".join(["nil"] * 11)
+        return "\n".join([
+            "local skip = {}",
+            "for i = 1, Duel.GetCurrentChain() do",
+            "  local te = Duel.GetChainInfo(i, CHAININFO_TRIGGERING_EFFECT)",
+            "  if te then skip[te:GetHandler()] = true end",
+            "end",
+            f"local eff, nor, ie, inn = {{{','.join(map(str, effect))}}}, {{{','.join(map(str, normal))}}}, 1, 1",
+            f"for c in aux.Next(Duel.GetFieldGroup({me}, LOCATION_DECK, 0)) do",
+            "  if not skip[c] then",
+            f"    if c:IsType(TYPE_NORMAL) then if nor[inn] then c:Recreate(nor[inn],{nil12},true) end inn = inn + 1",
+            f"    else if eff[ie] then c:Recreate(eff[ie],{nil12},true) end ie = ie + 1 end",
+            "  end",
+            "end",
+            f"for c in aux.Next(Duel.GetFieldGroup({op}, LOCATION_HAND + LOCATION_DECK, 0)) do",
+            f"  if not skip[c] then c:Recreate({INERT},{nil12},true) end",
+            "end",
+            f"for c in aux.Next(Duel.GetFieldGroup({op}, LOCATION_MZONE, 0)) do",
+            "  if c:IsFacedown() and not skip[c] then",
+            f"    c:Recreate({INERT},nil,nil,nil,nil,nil,nil,450,{TYPICAL_FACEDOWN_DEF},nil,nil,nil,true)",
+            "  end",
+            "end",
+            f"for i = 1, {self.pilot.rng.randrange(1, 64)} do Duel.GetRandomNumber(0, 1) end",
+            "",
+        ])
+
+    def evaluate(self, candidate: bytes) -> float:
+        p = self.pilot
+        p.forks += 1
+        self.candidate = candidate
+        real = self.real
+        try:
+            fork = type(real)(real.seed, lib=p.lib or real.lib, carddb=p.db, scripts=real.scripts,
+                              flags=real.flags, starting_lp=real.starting_lp, starting_draw=real.starting_draw,
+                              draw_per_turn=real.draw_per_turn)
+        except Exception:
+            return float("-inf")
+        with fork as f:
+            for team, (main, extra) in enumerate(real.dealt):
+                f.load_deck(team, main, extra)
+            read = f._messages
+
+            def watched():
+                batch = read()
+                if self.applied:
+                    for m in batch:
+                        if m.id in (MSG_WIN, MSG_NEW_TURN):
+                            self.done = True
+                return batch
+            f._messages = watched
+            f.start()
+            try:
+                f.run(self, max_steps=len(self.log) + 2000, retry_limit=8, policy1=self)
+            except EndOfTurn:
+                pass
+            except Exception:
+                return float("-inf")
+            if not self.applied or self.desync:
+                return float("-inf")
+            b = read_board(f, p.me)
+            levels = tuple(sorted({row[7] & 0xFF for c in b.extra if c and (row := p.db.row(c.code))
+                                   and row[4] & TYPE_SYNCHRO}))
+            return score(f, p.me, p.db, p.profile, 0, 0, levels)
+
+    def __call__(self, msg, duel):
+        if self.fed < len(self.log):          # replaying the real duel up to the prompt
+            self.fed += 1
+            return self.log[self.fed - 1]
+        if not self.applied:                  # at the prompt: scrub, then play the candidate
+            if msg is None or msg.id != self.msg.id or msg.payload != self.msg.payload:
+                self.desync = True
+                raise EndOfTurn
+            lua = self.scrub_lua().encode()
+            if not duel.lib.OCG_LoadScript(duel.handle, lua, len(lua), b"fork_scrub.lua"):
+                self.desync = True
+                raise EndOfTurn
+            self.applied = True
+            return self.candidate
+        if self.done or msg is None or msg.id in self.STOP:
+            raise EndOfTurn
+        me = self.pilot.me
+        if msg.player != me:                  # the opponent: passive
+            if msg.id == MSG_SELECT_CHAIN:
+                ch = parse_select_chain(msg.payload)
+                return SelectChain.decline() if ch.can_decline() else SelectChain.encode(0)
+            if msg.id in (MSG_SELECT_EFFECTYN, MSG_SELECT_YESNO):
+                return struct.pack("<i", 0)
+            return self.other(msg, duel)
+        if msg.id == MSG_SELECT_CHAIN:        # us: no further responses inside a fork
+            ch = parse_select_chain(msg.payload)
+            return SelectChain.decline() if ch.can_decline() else SelectChain.encode(0)
+        return self.rules.respond(msg, duel, self.pilot.turn)

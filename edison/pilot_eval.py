@@ -25,9 +25,9 @@ sys.path.insert(0, str(ROOT))
 from edison import pilots  # noqa: E402
 
 
-def _play(i: int, profile: str, export: bool = False) -> dict:
+def _play(i: int, profile: str, export: bool = False, respond: bool = True) -> dict:
     specs = (profile, "random") if i % 2 == 0 else ("random", profile)
-    r = pilots.play(i, specs, (profile, profile), export=export)
+    r = pilots.play(i, specs, (profile, profile), export=export, respond=respond)
     r["i"], r["seat"] = i, i % 2
     r["rejected_by_pilot"] = sum(1 for side, _ in r["rejected"] if side == r["seat"])
     return r
@@ -40,6 +40,7 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--tag", default="eval")
     ap.add_argument("--export", type=int, default=0, help="also export this many sample duels (wins or losses)")
+    ap.add_argument("--no-respond", action="store_true", help="pilot without response search (the old fixed rule)")
     args = ap.parse_args()
     out_dir = ROOT / "runs" / f"{args.profile}-{args.tag}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -49,7 +50,7 @@ def main() -> int:
     progress = pilots.Progress(args.duels)
     with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init) as pool, \
             open(out_dir / "duels.jsonl", "w") as log:
-        futures = [pool.submit(_play, i, args.profile) for i in range(args.duels)]
+        futures = [pool.submit(_play, i, args.profile, False, not args.no_respond) for i in range(args.duels)]
         for f in as_completed(futures):
             r = f.result()
             results.append(r)
@@ -83,6 +84,8 @@ def main() -> int:
     rej = Counter(("pilot" if side == r["seat"] else "random", mid) for r in results for side, mid in r["rejected"])
     lines.append(f"rejected answers (engine retries) {sum(r['retries'] for r in results)}; "
                  f"by the pilot {sum(r['rejected_by_pilot'] for r in results)}; traced: {dict(rej) or 'none'}")
+    lines.append(f"response search: forks/duel {sum(r['forks'] for r in results) / len(results):.0f}, "
+                 f"failed forks {sum(r.get('fork_failures', 0) for r in results)}")
     print("\n".join(lines))
     (out_dir / "summary.txt").write_text("\n".join(lines) + "\n")
 
@@ -91,7 +94,7 @@ def main() -> int:
     sample = [r for r in results if r not in losses][: args.export]
     ok, shown = 0, []
     for r in losses + sample:
-        x = _play(r["i"], args.profile, export=True)
+        x = _play(r["i"], args.profile, export=True, respond=not args.no_respond)
         tag = "loss" if r in losses else ("win" if won(r) else "draw")
         name = (f"{args.profile}-{args.tag} duel{r['i']:03d} {'first' if r['seat'] == 0 else 'second'} "
                 f"{tag}{'-' + kind(r).split()[0] if r in losses else ''}.yrp")

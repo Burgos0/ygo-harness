@@ -58,13 +58,14 @@ def label(spec: str) -> str:
     return "random-legal" if spec == "random" else f"{PROFILES[spec].name} pilot"
 
 
-def _policy(spec: str, seat: int, seed: int):
+def _policy(spec: str, seat: int, seed: int, respond: bool = True):
     from agents.lookahead import LookaheadPilot
     from agents.profiles import PROFILES
     from agents.random_legal import RandomLegal
     if spec == "random":
         return RandomLegal(seed=seed)
-    return LookaheadPilot(PROFILES[spec], seat=seat, seed=seed, lib=_ctx["lib"], carddb=_ctx["db"])
+    return LookaheadPilot(PROFILES[spec], seat=seat, seed=seed, lib=_ctx["lib"], carddb=_ctx["db"],
+                          respond_search=respond)
 
 
 def win_reason(messages) -> int:
@@ -73,10 +74,12 @@ def win_reason(messages) -> int:
     return wins[-1].payload[1] if wins else -1
 
 
-def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool = False) -> dict:
+def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool = False,
+         respond: bool = True) -> dict:
+    """respond=False turns off the pilots' response search (the fixed chain rule, as before it existed)."""
     from edison.duel import EdisonDuel
     rejected: list = []
-    pols = [Traced(_policy(specs[s], s, key), s, rejected) for s in (0, 1)]
+    pols = [Traced(_policy(specs[s], s, key, respond), s, rejected) for s in (0, 1)]
     seeds = (key + 1, key + 7, key + 13, key + 29)
     t = time.perf_counter()
     with EdisonDuel(seeds, lib=_ctx["lib"], carddb=_ctx["db"]) as d:
@@ -91,6 +94,9 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
         out = {"key": key, "specs": list(specs), "decks": list(decks), "seeds": list(seeds),
                "shuffles": [key, key + 500], "winner": r["winner"], "reason": win_reason(r["messages"]),
                "turns": turns, "steps": r["steps"], "retries": r["retries"], "rejected": rejected,
+               "windows": {s: p.inner.windows for s, p in enumerate(pols) if hasattr(p.inner, "windows")},
+               "forks": sum(getattr(p.inner, "forks", 0) for p in pols),
+               "fork_failures": sum(getattr(p.inner, "fork_failures", 0) for p in pols),
                "seconds": time.perf_counter() - t}
         if export:
             from viz.replay import build_yrp
