@@ -255,3 +255,40 @@ correct and concluded rules knowledge was not the gap. It sampled claims and
 never checked *turn structure*, which was exactly what was broken - the agent
 planned an attack from Main Phase 2. The primer helped. Sampling a category
 you did not think to look for proves nothing about it.
+
+## Edison pilots: generic lookahead + profiles, first pilot-vs-pilot matchup (2026-09-29)
+
+Engine-only measurements (no model calls). Edison rules (`EdisonDuel`), both lists from
+`edison/decks/`. Logs (one JSON line per duel/match, with seeds) in `runs/` (gitignored).
+
+**Refactor check.** `agents/lookahead.py` (generic) + `agents/profiles.py` (per deck). Lightsworn
+profile vs random-legal, 200 duels, alternating seats: **97.0% [93.6, 98.6]** (first 99/100,
+second 95/100), 0 rejected answers. The losses are the same six duel keys v2 lost on its first
+200 (059, 061, 067, 089, 132, 181), so the refactor is behaviour-identical; v2 was 98.0% over 500.
+
+**Pilot #2 = Blackwing-DAD**, the deck with the most recorded matches vs Lightsworn (TopDeck.gg,
+Lightsworn's row; mirrors excluded):
+
+| Lightsworn vs | Matches | Lightsworn W-L-D | Match win % [95% Wilson] |
+|---|---|---|---|
+| Blackwing-DAD | 411 | 185-225-1 | 45.1 [40.4, 50.0] |
+| Blackwing | 376 | 171-203-2 | 45.7 [40.7, 50.8] |
+| Frog Monarchs | 312 | 158-151-3 | 51.1 [45.6, 56.7] |
+| Machina | 194 | 105-88-1 | 54.4 [47.4, 61.3] |
+| Gladiator Beasts | 146 | 74-68-4 | 52.1 [43.9, 60.2] |
+
+(The six pilot decks = the six largest archetypes by deck count in `matchups.md`.)
+
+Blackwing-DAD profile v0 vs random-legal, 200 duels: **95.5% [91.7, 97.6]** (first 94/100,
+second 97/100), 0 rejected answers. Checkpoint (>= 90%) passed.
+
+**Lightsworn vs Blackwing-DAD, 500 Bo3** (game 1 alternates by match, loser of a game goes first
+next; `python -m edison.matchup --tag v0`): Lightsworn **81.0% [77.3, 84.2]** (405-95), 1221 games,
+games 71.5% to Lightsworn, 0 rejected answers, 1216 games ended on LP. Real: **45.1% [40.4, 50.0]**.
+**Difference +35.9 points - flagged (> 15).** The going-first player won only 48.4% of games.
+
+Not yet diagnosed. The obvious suspect is pilot skill, not the deck: the Lightsworn profile had three
+rounds of replay review and scenario tests, the Blackwing-DAD profile none; and Blackwing-DAD is a
+trap/control deck whose value is mostly on the *opponent's* turn, where the pilot does no search at
+all (fixed rule: activate the first chainable card). A pilot-vs-pilot number measures the pilots
+until both are shown to play their deck competently; it should not be read as a deck result.

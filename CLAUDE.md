@@ -34,7 +34,8 @@ not mean they ran. Install it from
 [projectignis.github.io/download.html](https://projectignis.github.io/download.html);
 on macOS the `.pkg` installs to `~/Applications/ProjectIgnis` with
 `installer -pkg <pkg> -target CurrentUserHomeDirectory`, no root needed.
-Point elsewhere with `EDOPRO_DIR`. **Launch it once before trusting the
+Point elsewhere with `EDOPRO_DIR` - a system-wide install (`/Applications/ProjectIgnis`, where
+the replay folder is on this machine) is **not** found by default, and every EDOPro test skips. **Launch it once before trusting the
 tests** — see trap 11.
 
 ## Layout
@@ -52,6 +53,8 @@ tests** — see trap 11.
 | `llm/provider.py` | one OpenAI-compatible client (OpenRouter/Ollama/…) |
 | `llm/models.yaml` | model roles, with the measurements that chose them |
 | `agents/` | policies. Anything goes here |
+| `agents/lookahead.py`, `agents/profiles.py` | generic deck pilot (lookahead to end of turn + score); per-deck weights, priorities, hints |
+| `edison/pilot_eval.py`, `edison/matchup.py` | profile pilot vs random-legal (the checkpoint); Bo3 pilot vs pilot beside the TopDeck number |
 | `bench/` | **sealed** eval protocol. Do not tune against it |
 | `viz/replay.py` | `.yrp` export - see the two `REPLAY_NEWREPLAY` traps below |
 | `scripts/verify_yrp.py` | replays a `.yrp` through EDOPro's own core/cards/scripts |
