@@ -340,3 +340,43 @@ the score sees no reason to wait (it has no term for "this could be better later
 Not fixed by this: the pilots still model a passive opponent (in forks and in copies), and 58.8% is
 still above the real 45.1% - the remaining gap is in range for profile tuning, which was deliberately
 not done here. n=500 matches per row; one run each.
+
+## Evaluation upgrade: card advantage, holding value, setup progress (2026-09-29)
+
+Same conditions. `agents/lookahead.py` `score()` gained, with no card names:
+- **Card advantage** over hand + field for both sides, plus usable GY resources (a card whose own script
+  registers an effect with a GY range - `GraveResources`, read from the script, no list) at half a card.
+- **Opponent's board** subtracted at the same rate as ours (1000 ATK = 25), so a 1-for-1 on a strong
+  monster gains and on a weak one does not; **lethal threat** (their face-up ATK already reaches our
+  LP) -250 and **near-lethal** (-60 per 1000 LP below 2000).
+- **Holding value** 40 per unused set card / quick-play / trap in hand (the opponent's set cards
+  count the same, as a threat), plus 60 per profile key card in hand.
+- **Progress hook** (`Profile.progress`): Lightsworn - distinct Lightsworn monster names in the GY toward
+  4, 25 each, +60 with Judgment Dragon live in hand. Blackwing-DAD - DARK monsters in the GY, 25 each up
+  to exactly 3, -40 per extra, +60 with Dark Armed Dragon live in hand. Key cards: Judgment Dragon;
+  Dark Armed Dragon, Gorz. Weights are first guesses, not tuned.
+
+**Regression vs random, 200 duels:** Lightsworn 99.0% -> **98.0%** [95.0, 99.2]; Blackwing-DAD 99.5% ->
+**100.0%** [98.1, 100.0]. 0 rejected answers, 0 failed forks. Within the 3-point limit.
+
+**500 Bo3, same seeds:**
+
+| | Lightsworn match win [95% CI] | Gap to real |
+|---|---|---|
+| Real (TopDeck.gg) | 45.1% [40.4, 50.0] | - |
+| Response search (previous) | 58.8% [54.4, 63.0] | +13.7 |
+| **Evaluation upgrade** | **64.0% [59.7, 68.1]** | **+18.9 - flagged** |
+
+Game 1 on the play: Lightsworn 68.4% when Lightsworn goes first, 59.6% when Blackwing-DAD does. Going
+first won 56.5% of games (55.0% before). Card advantage at the start of turn 5 (each pilot's own view,
+1265 games): **Lightsworn +0.17, Blackwing-DAD -0.17** - close to even, so the result is not decided by
+card count by turn 5.
+
+**Blackwing-DAD's traps in the matchup** (previous -> now): activated when offered 13.7% -> 11.5%; per
+game 2.25 -> 2.24; answering an attack 43% -> 38% of activations; opponent's Draw Phase 35% -> 20%;
+Main Phase 1 15% -> 24% (Torrential 218 -> 264, Solemn 146 -> 177 - more used on summons); Trap Dustshoot
+295 -> 119 (a 1-for-0 on sight no longer scores).
+
+The upgrade moved the simulation *away* from the real number: whatever it gave Blackwing-DAD, it gave
+Lightsworn more. Both decks run the same evaluation, so this does not say which side's play improved;
+an ablation (new Lightsworn vs previous Blackwing-DAD and the reverse) is the way to find out. Not run.

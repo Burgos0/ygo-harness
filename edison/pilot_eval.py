@@ -84,6 +84,9 @@ def main() -> int:
     rej = Counter(("pilot" if side == r["seat"] else "random", mid) for r in results for side, mid in r["rejected"])
     lines.append(f"rejected answers (engine retries) {sum(r['retries'] for r in results)}; "
                  f"by the pilot {sum(r['rejected_by_pilot'] for r in results)}; traced: {dict(rej) or 'none'}")
+    ca5 = [r["ca"][r["seat"]][5] for r in results if 5 in r["ca"].get(r["seat"], {})]
+    if ca5:
+        lines.append(f"card advantage at turn 5: {sum(ca5) / len(ca5):+.2f} cards (mean of {len(ca5)} duels)")
     lines.append(f"response search: forks/duel {sum(r['forks'] for r in results) / len(results):.0f}, "
                  f"failed forks {sum(r.get('fork_failures', 0) for r in results)}")
     print("\n".join(lines))

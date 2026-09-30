@@ -33,6 +33,7 @@ Phase triggers may fire again in the copy; the opponent is passive in every copy
 from __future__ import annotations
 
 import random
+import re
 import struct
 import tempfile
 from dataclasses import dataclass, field
@@ -48,8 +49,8 @@ from engine.constants import (LOCATION_DECK, LOCATION_HAND, LOCATION_MZONE, LOCA
                               MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
                               MSG_SELECT_EFFECTYN, MSG_SELECT_IDLECMD, MSG_SELECT_POSITION,
                               MSG_SELECT_YESNO, MSG_SPSUMMONING, MSG_SUMMONING, MSG_WIN, PHASE_END,
-                              PHASE_MAIN2, PHASE_NAMES, TYPE_MONSTER, TYPE_NORMAL, TYPE_SYNCHRO, TYPE_TRAP,
-                              TYPE_TUNER)
+                              PHASE_MAIN2, PHASE_NAMES, TYPE_MONSTER, TYPE_NORMAL, TYPE_QUICKPLAY,
+                              TYPE_SYNCHRO, TYPE_TRAP, TYPE_TUNER)
 from engine.duel import Duel
 from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTLE_TO_M2, IDLE_ACTIVATE,
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
@@ -75,8 +76,17 @@ EVENTS = {MSG_ATTACK: "attack", MSG_CHAINING: "chain", MSG_SUMMONING: "summon", 
 
 @dataclass(frozen=True)
 class Weights:
-    """Score terms. Defaults are the Lightsworn v2 values."""
+    """Score terms. Card advantage is the unit: 100 = one card."""
     card: float = 100.0              # per card of advantage (hand + field + set, ours minus theirs)
+    gy_resource: float = 50.0        # per GY card with an effect usable from the GY, both sides
+    hold: float = 40.0               # per unused set card / quick-play / trap in hand, both sides (theirs:
+                                     # set cards only) - what spending one must beat on top of the card
+    key_card: float = 60.0           # per profile key card in our hand, while unused
+    op_board_atk: float = 1 / 40     # per point of the opponent's face-up ATK (subtracted): so removing a
+                                     # strong monster 1-for-1 is a gain and a weak one is not
+    lethal_threat: float = 250.0     # the opponent's face-up ATK already reaches our LP
+    low_lp: float = 60.0             # per 1000 LP we are below low_lp_line (near-lethal)
+    low_lp_line: int = 2000
     my_lp: float = 0.03              # per LP of ours
     op_lp: float = 0.06              # per LP of theirs (subtracted): 1000 LP = 60 ~ a 1600 direct attack
     board_atk: float = 1 / 40        # per point of face-up ATK: 1000 = 25
@@ -102,7 +112,9 @@ class Profile:
     search_archetype: str | None = None      # choosing a card of ours: this archetype is worth +500 ATK
     hold: frozenset = frozenset()            # passcodes never activated by the pilot (e.g. D.D. Crow)
     attack_position_atk: int = 1600          # Summon in Attack Position at this ATK or more
-    bonus: Callable | None = None            # bonus(mine, theirs, db) -> extra score, deck-specific
+    key_cards: frozenset = frozenset()       # card names worth holding in hand (Weights.key_card each)
+    progress: Callable | None = None         # progress(mine, theirs, db) -> score for win-condition setup that
+                                             # shows no immediate board change (a slow deck's turns)
 
 
 class EndOfTurn(Exception):
@@ -254,8 +266,35 @@ class Rules:
 
 # ------------------------------------------------------------------ scoring
 
+class GraveResources:
+    """Whether a card does something *from* the GY: its script registers an effect with a GY range.
+
+    Read from the card's own script, so no card list: Necro Gardna, Plaguespreader Zombie, Glow-Up Bulb
+    qualify; Sangan (fires on the way to the GY) does not.
+    """
+    GY_RANGE = re.compile(rb"SetRange\([^)]*LOCATION_GRAVE")
+
+    def __init__(self, scripts):
+        self.scripts, self.cache = scripts, {}
+
+    def __call__(self, code: int) -> bool:
+        if code not in self.cache:
+            body = self.scripts.read(f"c{code}.lua") or b""
+            self.cache[code] = bool(self.GY_RANGE.search(body))
+        return self.cache[code]
+
+
+def card_advantage(mine, theirs, gy, hidden_opp_hand: int = 0, hidden_opp_set: int = 0) -> float:
+    """Cards: hand + field for both sides, plus half a card per usable GY resource. Ours minus theirs."""
+    def side(b, hidden):
+        cards = (sum(1 for c in b.hand if c) + sum(1 for c in b.monsters if c)
+                 + sum(1 for c in b.spells if c) + hidden)
+        return cards + 0.5 * sum(1 for c in b.grave if c and gy(c.code))
+    return side(mine, 0) - side(theirs, hidden_opp_hand + hidden_opp_set)
+
+
 def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hidden_opp_set: int,
-          extra_levels: tuple, attacks: int = 0) -> float:
+          extra_levels: tuple, attacks: int = 0, gy=lambda code: False) -> float:
     w = profile.weights
     fi = query_field(duel)
     mine, theirs = read_board(duel, me), read_board(duel, 1 - me)
@@ -265,10 +304,21 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     if my_lp <= 0:
         return -1e6
     my_mons = [c for c in mine.monsters if c]
-    my_cards = sum(1 for c in mine.hand if c) + len(my_mons) + sum(1 for c in mine.spells if c)
-    op_cards = (sum(1 for c in theirs.hand if c) + hidden_opp_hand + sum(1 for c in theirs.monsters if c)
-                + sum(1 for c in theirs.spells if c) + hidden_opp_set)
-    s = w.card * (my_cards - op_cards)                     # card advantage: heaviest
+    # Card advantage, heaviest. GY resources count for both sides (both GYs are public).
+    s = w.card * card_advantage(mine, theirs, lambda c: False, hidden_opp_hand, hidden_opp_set)
+    s += w.gy_resource * (sum(1 for c in mine.grave if c and gy(c.code))
+                          - sum(1 for c in theirs.grave if c and gy(c.code)))
+    # Holding value: an unused set card, quick-play or trap in hand is worth more than its card count, so
+    # spending one has to gain more than it (a 2-for-1, a stronger card, a stopped lethal) - not fire on
+    # sight. The opponent's set cards carry the same value as a threat, which is what removing them gains.
+    def is_quick(code):
+        t = (db.row(code) or (0,) * 5)[4]
+        return bool(t & TYPE_TRAP or t & TYPE_QUICKPLAY)
+    held = (sum(1 for c in mine.spells if c and not c.position & 0x5)
+            + sum(1 for c in mine.hand if c and is_quick(c.code)))
+    op_set = hidden_opp_set + sum(1 for c in theirs.spells if c and not c.position & 0x5)
+    s += w.hold * (held - op_set)
+    s += w.key_card * sum(1 for c in mine.hand if c and db.name(c.code) in profile.key_cards)
     deck = mine.deck_count or sum(1 for c in mine.deck if c)
     # LP terms grow up to 4x as our Deck runs out (urgency_deck=30: from 30 cards down) - a deck that mills
     # itself must close the game before it decks out, so damage and attacking matter more late.
@@ -277,9 +327,14 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     face_up = [c for c in my_mons if c.position & 0x5]
     s += sum(c.attack for c in face_up) * w.board_atk + w.per_monster * min(len(my_mons), w.monster_cap)
     s -= w.overcommit * max(0, len(my_mons) - w.monster_cap)   # don't overcommit into mass removal
+    their_atk = sum(c.attack for c in theirs.monsters if c and c.position & 0x5)
+    s -= their_atk * w.op_board_atk
+    # Lethal / near-lethal: their visible attackers already reach our LP, or our LP is low.
+    if their_atk >= my_lp:
+        s -= w.lethal_threat
+    s -= w.low_lp * max(0, w.low_lp_line - my_lp) / 1000.0
     # Risk of committing into set Spells/Traps (Mirror Force, Torrential, Bottomless...): each face-down
     # card the opponent controls threatens every extra monster we put out, and every attack we make.
-    op_set = hidden_opp_set + sum(1 for c in theirs.spells if c and not c.position & 0x5)
     s -= op_set * (w.set_risk_monster * max(0, len(my_mons) - 1) + w.set_risk_attack * attacks)
     tuners = [c.level for c in face_up if c.type & TYPE_TUNER]
     others = [c.level for c in face_up if not c.type & TYPE_TUNER]
@@ -288,8 +343,8 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
         s += w.synchro_ready                               # a Synchro play is on the board
     if deck < w.low_deck:
         s -= w.low_deck_penalty * (w.low_deck - deck)
-    if profile.bonus:
-        s += profile.bonus(mine, theirs, db)
+    if profile.progress:                                   # win-condition setup (slow decks)
+        s += profile.progress(mine, theirs, db)
     return s
 
 
@@ -316,6 +371,8 @@ class LookaheadPilot:
         self.responding = False   # we just took a searched response: its target choices are searched too
         self.windows: list[dict] = []   # every response prompt: options, taken/passed, timing
         self.forks = self.fork_failures = 0
+        self.gy = GraveResources(self.scripts)
+        self.ca_log: dict[int, float] = {}   # turn number -> card advantage at its start (our view)
         self.event = "phase"
 
     def attach(self, duel) -> None:
@@ -335,6 +392,12 @@ class LookaheadPilot:
             batch = read()
             for m in batch:
                 self.turn.observe(m.id, m.payload)
+                if m.id == MSG_NEW_TURN:   # card advantage at the start of each turn (public + own info)
+                    try:
+                        self.ca_log[self.turn.number] = card_advantage(
+                            read_board(duel, self.me), read_board(duel, 1 - self.me), self.gy)
+                    except Exception:
+                        pass
                 # What a response window answers: the last attack / summon / chain link, until the turn
                 # player next gets a free menu or the phase changes. Tracked here, not from the duel's
                 # since_last_decision - the turn player's own prompt (it has priority) clears that first.
@@ -614,7 +677,7 @@ class LookaheadPilot:
             if not roll.applied or roll.missed_choice:
                 return float("-inf")
             return score(d, 0, self.db, self.profile, snap["hidden_hand"], snap["hidden_set"], snap["extra_levels"],
-                         attacks=roll.attacks)
+                         attacks=roll.attacks, gy=self.gy)
 
 
 class _Rollout:
@@ -839,7 +902,7 @@ class Fork:
             b = read_board(f, p.me)
             levels = tuple(sorted({row[7] & 0xFF for c in b.extra if c and (row := p.db.row(c.code))
                                    and row[4] & TYPE_SYNCHRO}))
-            return score(f, p.me, p.db, p.profile, 0, 0, levels)
+            return score(f, p.me, p.db, p.profile, 0, 0, levels, gy=p.gy)
 
     def __call__(self, msg, duel):
         if self.fed < len(self.log):          # replaying the real duel up to the prompt

@@ -41,7 +41,8 @@ def play_match(m: int, a: str, b: str, respond: bool = True) -> dict:
                       "first": first, "winner": winner, "reason": r["reason"], "turns": r["turns"],
                       "retries": r["retries"], "rejected": r["rejected"], "seconds": round(r["seconds"], 2),
                       "windows": {({0: first, 1: second}[int(s)]): w for s, w in r["windows"].items()},
-                      "forks": r["forks"]})
+                      "forks": r["forks"],
+                      "ca": {({0: first, 1: second}[int(s)]): c for s, c in r["ca"].items()}})
         if max(wins[a], wins[b]) == 2:
             break
         first = second if winner == first else (first if winner == second else second)
@@ -122,6 +123,10 @@ def main() -> int:
     lines.append(f"rejected answers (engine retries) {sum(g['retries'] for g in games)}; traced (seat, msg): "
                  f"{dict(rej) or 'none'}")
     lines.append(f"response search: forks/game {sum(g.get('forks', 0) for g in games) / len(games):.0f}")
+    for who in (a, b):   # card advantage at the start of turn 5, from each pilot's own view
+        v = [g["ca"][who][5] for g in games if 5 in g.get("ca", {}).get(who, {})]
+        if v:
+            lines.append(f"card advantage at turn 5, {who}: {sum(v) / len(v):+.2f} cards (mean of {len(v)} games)")
     from engine.constants import WIN_REASON_DECKOUT, WIN_REASON_LP
     reasons = Counter({WIN_REASON_LP: "LP to 0", WIN_REASON_DECKOUT: "deck-out"}.get(g["reason"], f"other ({g['reason']})")
                       for g in games)
