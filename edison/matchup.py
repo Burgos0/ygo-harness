@@ -75,6 +75,7 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--tag", default="run")
     ap.add_argument("--no-respond", action="store_true", help="pilots without response search (the old fixed rule)")
+    ap.add_argument("--deck-variant", default="", help="play edison/decks/<stem>_<variant>.ydk (e.g. consensus)")
     args = ap.parse_args()
     a, b = args.a, args.b
     out_dir = ROOT / "runs" / f"matchup-{a}-vs-{b}-{args.tag}"
@@ -83,7 +84,10 @@ def main() -> int:
 
     results, duels = [], 0
     progress = pilots.Progress(args.matches, every=20, unit="matches")
-    with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init) as pool, \
+    if args.deck_variant:
+        print(f"decklists: edison/decks/<deck>_{args.deck_variant}.ydk")
+    with ProcessPoolExecutor(args.workers, mp_context=mp.get_context("spawn"), initializer=pilots.init,
+                             initargs=(args.deck_variant,)) as pool, \
             open(out_dir / "matches.jsonl", "w") as log:
         futures = [pool.submit(play_match, m, a, b, not args.no_respond) for m in range(args.matches)]
         for f in as_completed(futures):

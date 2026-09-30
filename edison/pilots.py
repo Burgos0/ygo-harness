@@ -20,13 +20,15 @@ EDOPRO_REPLAYS = Path("/Applications/ProjectIgnis/replay")
 _ctx: dict = {}
 
 
-def init():
+def init(variant: str = ""):
+    """variant: play edison/decks/<stem>_<variant>.ydk instead of each profile's own list (e.g. "consensus")."""
     from edison.fastload import CachedCardDB, CompiledScripts
     from edison.provider import EdisonScriptProvider
     from engine.ocgapi import load
     lib = load()
     # Scripts compiled once per process and card rows cached: behaviour-neutral, see edison/fastload.py.
-    _ctx.update(lib=lib, db=CachedCardDB(), scripts=CompiledScripts(EdisonScriptProvider(), lib), decks={})
+    _ctx.update(lib=lib, db=CachedCardDB(), scripts=CompiledScripts(EdisonScriptProvider(), lib), decks={},
+                variant=variant)
 
 
 def deck(name: str):
@@ -34,7 +36,10 @@ def deck(name: str):
     from agents.profiles import PROFILES
     from edison.deck import load_ydk
     if name not in _ctx["decks"]:
-        _ctx["decks"][name] = load_ydk(ROOT / PROFILES[name].deck)
+        path = ROOT / PROFILES[name].deck
+        if _ctx.get("variant"):
+            path = path.with_name(f"{path.stem}_{_ctx['variant']}{path.suffix}")
+        _ctx["decks"][name] = load_ydk(path)
     return _ctx["decks"][name]
 
 

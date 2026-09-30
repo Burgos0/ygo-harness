@@ -185,3 +185,9 @@ def test_dad_rftdd_lethal_is_scored():
     without = prog(board(banished=banished), board(), DB, NS(my_lp=4000, op_lp=6000))
     assert with_rftdd(6000) - without >= 150, "6800 banished ATK vs 6000 LP and no blockers: lethal"
     assert with_rftdd(6000) > with_rftdd(9000), "short of lethal is only progress"
+
+
+@pytest.mark.parametrize("stem", ["lightsworn", "blackwing_dad", "blackwing"])
+def test_consensus_lists_are_legal_and_exactly_40_15_15(stem):
+    d = load_ydk(ROOT / "edison" / "decks" / f"{stem}_consensus.ydk")   # raises on any Edison violation
+    assert (len(d.main), len(d.extra), len(d.side)) == (40, 15, 15)

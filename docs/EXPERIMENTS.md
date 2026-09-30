@@ -487,6 +487,15 @@ Read every simulated matchup number against these. None of them is corrected for
   turn (traps) is modelled worse than one that wins on its own turn.
 - **Real data includes player-skill selection.** Who picks which deck is not random, and players differ
   in skill; the simulation has two fixed pilots of whatever skill the code has.
+- **The passive-opponent lookahead likely favours proactive decks over reactive ones.** Copies and
+  forks let the opponent do nothing, so a line that wins on our own turn (Summon, search, attack) is
+  valued with its real payoff, while a deck whose value is in answering the opponent (set traps,
+  Solemn Judgment, Gorz) is valued as if nothing will need answering. Evidence: Blackwing-DAD, the most
+  reactive of the three, loses every simulated matchup it plays while it is at or above 50% in the real
+  data - match win vs Lightsworn **37.5% / 40.0%** simulated (original / consensus lists) vs **54.9%**
+  real; vs Blackwing **16.5% / 21.5%** simulated vs **51.4%** real. The most proactive, pure Blackwing,
+  wins every simulated matchup by 23-35 points more than it does for real. The order the simulation
+  produces (Blackwing > Lightsworn > Blackwing-DAD) is close to the reverse of the real one.
 - Smaller: the real data includes match draws (time), which the simulation never produces; games 2-3
   here go loser-first by convention; the opponent's face-down Spells/Traps are not scrubbed in forks.
 
@@ -638,3 +647,39 @@ is simply the first legal Blackwing-DAD list in the data (Lightsworn's is a cons
 Whirlwind engine, which the lookahead values well because it pays off on our own turn, where the pilot
 searches best. A list-quality control (Blackwing-DAD re-drawn from its best record, the same way) would
 separate the first from the second.
+
+## Control: consensus decklists (2026-09-30)
+
+Before judging any matchup, the three lists were standardized with one rule (`edison/consensus.py`):
+the archetype's legal lists whose player finished with a winning record, each card at its most common
+copy count (0 included), filled or trimmed to exactly 40 / 15 / 15 by per-copy frequency, copies across
+sections within the March 2010 banlist. n = **132** Lightsworn, **233** Blackwing-DAD, **212** Blackwing
+lists. Saved as `edison/decks/<deck>_consensus.ydk` (all validate); the old lists are kept. Runs use
+them with `python -m edison.matchup --deck-variant consensus`.
+
+**Diff vs the lists used so far:**
+- Lightsworn (was 41 main): main +D.D. Crow, +Pot of Avarice, +Ryko / -Caius, -Foolish Burial,
+  -Snipe Hunter, -Threatening Roar; extra +Tempest Magician / -X-Saber Urbellum; side 4 copies differ.
+- **Blackwing-DAD** (was the first legal list in the data): main **10 copies differ** - +2 Bottomless Trap
+  Hole, +2 Deck Devastation Virus, +Brain Control, +Caius, +Chaos Sorcerer, +Charge of the Light Brigade,
+  +Ryko, +Super-Nimble Mega Hamster / -3 Upstart Goblin, -2 Icarus Attack, -2 Legacy of Yata-Garasu,
+  -Armageddon Knight, -Dark Grepher, -Starlight Road; extra +Armory Arm, +Chimeratech Fortress Dragon /
+  -Silverwind, -Armed Wing; side 8 copies differ.
+- Blackwing (was the 12-1 list): main +Vayu, +2 Legacy of Yata-Garasu / -Book of Moon, -Deck Devastation
+  Virus, -Royal Oppression; extra identical; side 5 copies differ.
+
+**200 Bo3 each, same seeds, all consensus lists** (the first-named deck's match win):
+
+| Matchup | Simulated, consensus | Simulated, previous lists | Real (TopDeck.gg) | Paired prev -> consensus |
+|---|---|---|---|---|
+| Lightsworn vs Blackwing-DAD | **60.0% [53.1, 66.5]** | 62.5% [55.6, 68.9] | 45.1% [40.4, 50.0] | 47 to LS, 52 away (p = 0.69) |
+| Blackwing vs Lightsworn | **77.5% [71.2, 82.7]** | 80.5% [74.5, 85.4] | 54.3% [49.2, 59.3] | 28 to BW, 34 away (p = 0.53) |
+| Blackwing vs Blackwing-DAD | **78.5% [72.3, 83.6]** | 83.5% [77.7, 88.0] | 48.6% [44.5, 52.7] | 25 to BW, 35 away (p = 0.25) |
+
+0 random fallbacks and 0 rejected answers in all three. Gaps to real: +14.9, +23.2 (flagged), +29.9
+(flagged). Card advantage at turn 5 (first-named deck): +0.33, +0.44, +0.47.
+
+**List choice was not the cause.** Standardizing moved every matchup 2.5-5 points toward the real
+number, none distinguishable from noise, and Blackwing-DAD - whose list changed most - still loses both
+of its matchups by 20-30 points more than the real data. The one pattern that holds across all six
+simulated matchups is reactive vs proactive, now recorded under "Known sim biases".
