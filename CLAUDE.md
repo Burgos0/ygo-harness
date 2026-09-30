@@ -287,6 +287,10 @@ error.
     silently took the first card listed. It looked like a strategic choice
     in replays. Before blaming a pilot's judgement for a card choice, check
     which code path answered that prompt.
+    `python -m edison.fallback_audit` counts them; every run report prints
+    them per game. And never offer "cancel" as a search candidate on such a
+    prompt: it backs out to the menu, the same action is chosen again, and
+    the duel loops forever.
 
 ## Models
 

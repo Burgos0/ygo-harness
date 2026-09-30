@@ -529,3 +529,65 @@ Main Phase) - Lightsworn's removal rarely targets (Judgment Dragon and Lyla-styl
 **RftDD 109 activations (0.21/game), 16 lethal** (the 65.5% run: 102 in chain windows, 1 lethal - its
 Main Phase activations were not logged, so the lethal count is not comparable). Lost games ending with a
 trap still set: 35% -> 36%.
+
+## Random-fallback audit (2026-09-30)
+
+`python -m edison.fallback_audit` reran the 62.0% matchup and both vs-random checkpoints on their seeds
+(600/600 reruns identical to the logs) counting every prompt a pilot's rules passed to random-legal.
+Four prompt types, in the real duel, per game:
+
+| Prompt | Blackwing-DAD (matchup / vs random) | Lightsworn (matchup / vs random) | What asked |
+|---|---|---|---|
+| zone (`SELECT_PLACE`) | 11.4 / 13.2 | 9.8 / 9.8 | every monster and Spell/Trap placement |
+| one-at-a-time pick (`SELECT_UNSELECT_CARD`) | 0.88 / 1.52 | 0.91 / 1.46 | Synchro materials (Goyo Guardian, Colossal Fighter, Armor Master), Chaos Sorcerer's banish cost, Icarus Attack's Tribute |
+| Tribute Summon (`SELECT_TRIBUTE`) | 0.23 / 0.41 | 0.33 / 0.36 | Sirocco, Gorz; Caius, Celestia |
+| number (`ANNOUNCE_NUMBER`) | 0.28 / 0.52 | 0.18 / 0.28 | Card Trooper's mill count |
+
+Inside lookahead copies and forks the same four ran ~80-100 times per game. So every Synchro's
+materials were "the first listed", every Tribute Summon's tributes and Card Trooper's count were random.
+
+Now (`lookahead.py`, no card names): in the real duel each of these prompts is searched like a response
+- every candidate answer (each zone, each Tribute set of the minimum size, each single pick plus
+"finish" when finishing is legal, each number) forked and scored with the same evaluation. Inside
+copies and forks, fixed rules: lowest free zone, lowest-ATK tributes, costs paid with our lowest-ATK card
+and the opponent's best card chosen, the largest number. **Cancelling a one-at-a-time pick is not a
+candidate**: it backs out of the whole action to the menu, the pilot picks the same action again, and
+the first version of this looped a duel forever.
+
+Every run report now prints random-fallback answers per game (real duel and inside lookahead).
+
+Checks: `tests/test_decisions.py` passes. Vs random, 200 duels: Lightsworn 97.5% (unchanged),
+Blackwing-DAD 98.5% (unchanged); fallback answers 0.00 / 0.00. **200 Bo3 on the same seeds as the 62.0%
+run: Lightsworn 63.0% [56.1, 69.4]** vs 45.1% real; paired 28 matches flipped to Lightsworn, 26 to
+Blackwing-DAD (p = 0.89); fallback answers 0.00 per game for both pilots, real duel and lookahead.
+Cost: zone forks are the bulk of the new searches - 47.9 -> 29.8 matches/min.
+
+## Step 3 closed: second pilot and the first real matchup (2026-09-30)
+
+Pilot #2 is Blackwing-DAD (most recorded matches vs Lightsworn: 411). Both pilots are the generic
+lookahead pilot with a profile; both beat random-legal 97-100% with 0 rejected answers and 0 random
+fallbacks. Lightsworn vs Blackwing-DAD, Lightsworn's match win (real: **45.1% [40.4, 50.0]**, n=411):
+
+| Step | Change | n (Bo3) | Lightsworn | Paired vs previous |
+|---|---|---|---|---|
+| v0 | fixed chain rule (traps fired at the first window) | 500 | 81.0% | - |
+| response search | opponent-turn / battle prompts searched on forks | 500 | 58.8% | (same seeds; 81.0 reproduced) |
+| evaluation upgrade | card advantage, holding value, setup progress | 500 | 64.0% | attribution: no switch distinguishable |
+| hold scaling | holding value scales with board / new threats | 200 | 60.0% | p = 0.044 |
+| tuning round 1 | hidden cards, LP curve, threat-weighted removal | 200 | 65.5% | p = 0.20 |
+| tuning round 2 | Blackwing-DAD profile from an expert guide | 200 | 62.0% | p = 0.36 |
+| fallback audit | real rules for every prompt left to random | 200 | **63.0% [56.1, 69.4]** | p = 0.89 |
+
+**Final gap: +17.9 points.** One structural change moved it - response search, which fixed a pilot that
+could not play the opponent's turn (81.0 -> 58.8). Since then five changes, two of them Blackwing-DAD-
+specific (the guide, and the decision test showing it now negates the right summons) and three generic,
+have each changed individual games (25-30% of paired matches flip) without moving the rate beyond noise,
+and the gap has held at +15 to +20. The Blackwing-DAD pilot now does what the guide asks - traps held
+for threats, Vayu 0.5 times a game, RftDD lethal 16 times in 200 matches, no random choices - and
+still loses the matchup by the same margin.
+
+**Conclusion:** the remaining gap is not a pilot-tuning problem that another term will close. It points
+at the documented biases (see "Known sim biases"): no side decking in games 2-3, one decklist against
+hundreds of builds, a lookahead that assumes the opponent never responds (which costs a trap deck more
+than a Lightsworn deck), and player-skill selection in the real data. Step 4 should carry the
++15-20 point matchup gap as a known offset rather than a tuning target.

@@ -71,6 +71,11 @@ def _policy(spec: str, seat: int, seed: int, respond: bool = True):
                           scripts=_ctx["scripts"], respond_search=respond)
 
 
+def _named(counts) -> dict:
+    from engine.constants import MSG_NAMES
+    return {MSG_NAMES.get(k, str(k)): v for k, v in counts.items()}
+
+
 def win_reason(messages) -> int:
     from engine.constants import MSG_WIN
     wins = [m for m in messages if m.id == MSG_WIN]
@@ -108,6 +113,9 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
                "turns": turns, "steps": r["steps"], "retries": r["retries"], "rejected": rejected,
                "windows": {s: p.inner.windows for s, p in enumerate(pols) if hasattr(p.inner, "windows")},
                "end_traps": end_traps,
+               "fallbacks": {s: _named(p.inner.rules.fallbacks) for s, p in enumerate(pols) if hasattr(p.inner, "rules")},
+               "lookahead_fallbacks": {s: _named(p.inner.lookahead_fallbacks) for s, p in enumerate(pols)
+                                       if hasattr(p.inner, "lookahead_fallbacks")},
                "actions": {s: p.inner.actions for s, p in enumerate(pols) if hasattr(p.inner, "actions")},
                "ca": {s: p.inner.ca_log for s, p in enumerate(pols) if hasattr(p.inner, "ca_log")},
                "forks": sum(getattr(p.inner, "forks", 0) for p in pols),

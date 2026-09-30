@@ -88,6 +88,11 @@ def main() -> int:
     ca5 = [r["ca"][r["seat"]][5] for r in results if 5 in r["ca"].get(r["seat"], {})]
     if ca5:
         lines.append(f"card advantage at turn 5: {sum(ca5) / len(ca5):+.2f} cards (mean of {len(ca5)} duels)")
+    fb = [sum(r["fallbacks"].get(r["seat"], {}).values()) for r in results]
+    lk = [sum(r["lookahead_fallbacks"].get(r["seat"], {}).values()) for r in results]
+    kinds = Counter(k for r in results for k, v in r["fallbacks"].get(r["seat"], {}).items() for _ in range(v))
+    lines.append(f"random-fallback answers per duel: {sum(fb) / len(results):.2f} in the real duel (target 0)"
+                 + (f" {dict(kinds)}" if kinds else "") + f", {sum(lk) / len(results):.2f} inside lookahead")
     lines.append(f"response search: forks/duel {sum(r['forks'] for r in results) / len(results):.0f}, "
                  f"failed forks {sum(r.get('fork_failures', 0) for r in results)}")
     print("\n".join(lines))

@@ -46,7 +46,10 @@ def play_match(m: int, a: str, b: str, respond: bool = True) -> dict:
                       "forks": r["forks"], "t_copies": round(r["t_copies"], 3), "t_forks": round(r["t_forks"], 3),
                       "ca": {({0: first, 1: second}[int(s)]): c for s, c in r["ca"].items()},
                       "end_traps": {({0: first, 1: second}[s]): t for s, t in r["end_traps"].items()},
-                      "actions": {({0: first, 1: second}[s]): a for s, a in r["actions"].items()}})
+                      "actions": {({0: first, 1: second}[s]): a for s, a in r["actions"].items()},
+                      "fallbacks": {({0: first, 1: second}[s]): f for s, f in r["fallbacks"].items()},
+                      "lookahead_fallbacks": {({0: first, 1: second}[s]): f
+                                              for s, f in r["lookahead_fallbacks"].items()}})
         if max(wins[a], wins[b]) == 2:
             break
         first = second if winner == first else (first if winner == second else second)
@@ -132,6 +135,12 @@ def main() -> int:
     lines.append(f"time in games {tg:.0f}s (sum over workers): lookahead copies {tc / tg:.0%}, response forks "
                  f"{tf / tg:.0%}, real duel engine + policy {(tg - tc - tf) / tg:.0%}; "
                  f"{len(results) / (time.perf_counter() - progress.t) * 60:.1f} matches/min")
+    for who in (a, b):   # prompts a pilot left to the random-legal fallback
+        fb = sum(sum(g.get("fallbacks", {}).get(who, {}).values()) for g in games)
+        lk = sum(sum(g.get("lookahead_fallbacks", {}).get(who, {}).values()) for g in games)
+        kinds = Counter(k for g in games for k, v in g.get("fallbacks", {}).get(who, {}).items() for _ in range(v))
+        lines.append(f"random-fallback answers per game, {who}: {fb / len(games):.2f} in the real duel (target 0)"
+                     + (f" {dict(kinds)}" if kinds else "") + f", {lk / len(games):.2f} inside lookahead")
     for who in (a, b):   # card advantage at the start of turn 5, from each pilot's own view
         v = [g["ca"][who][5] for g in games if 5 in g.get("ca", {}).get(who, {})]
         if v:

@@ -71,3 +71,52 @@ def test_generic_pilot_still_names_no_card():
     src = (ROOT / "agents" / "lookahead.py").read_text()
     names = set().union(*(p.engine | set(p.discard_first) for p in PROFILES.values()))
     assert not any(f'"{n}"' in src for n in names)
+
+
+# ---------------------------------------------------------------- prompts that used to fall to random-legal
+
+import random as _random  # noqa: E402
+import struct as _struct  # noqa: E402
+from types import SimpleNamespace as _NS  # noqa: E402
+
+from agents.lookahead import Rules, prompt_candidates  # noqa: E402
+from engine.carddb import CardDB  # noqa: E402
+from engine.constants import (MSG_ANNOUNCE_NUMBER, MSG_SELECT_PLACE, MSG_SELECT_TRIBUTE,  # noqa: E402
+                              MSG_SELECT_UNSELECT_CARD)
+
+SANGAN_, DAD_ = 26202165, 65192027   # 1000 ATK, 2800 ATK
+
+
+def _rules():
+    return Rules(0, CardDB(), _random.Random(0), PROFILES["blackwing_dad"])
+
+
+def test_zone_prompt_candidates_are_the_free_zones():
+    flag = 0xFFFFFFFF & ~0b10110            # our monster zones 1, 2 and 4 free
+    msg = _NS(id=MSG_SELECT_PLACE, payload=bytes([0, 1]) + _struct.pack("<I", flag))
+    assert prompt_candidates(msg) == [bytes([0, 0x04, s]) for s in (1, 2, 4)]
+    r = _rules()
+    assert r.respond(msg, None, None) == bytes([0, 0x04, 1]) and not r.fallbacks
+
+
+def test_tribute_rule_offers_the_weakest_and_candidates_cover_each():
+    entry = lambda code, seq: _struct.pack("<IBBIB", code, 0, 0x04, seq, 0)
+    payload = bytes([0, 0]) + _struct.pack("<III", 1, 1, 2) + entry(DAD_, 0) + entry(SANGAN_, 1)
+    msg = _NS(id=MSG_SELECT_TRIBUTE, payload=payload)
+    assert len(prompt_candidates(msg)) == 2
+    assert _rules().respond(msg, None, None) == _struct.pack("<iI", 0, 1) + _struct.pack("<I", 1)
+
+
+def test_unselect_rule_pays_costs_with_our_weakest_card():
+    entry = lambda code, con, seq: _struct.pack("<IBBII", code, con, 0x04, seq, 0x1)
+    payload = bytes([0, 0, 0]) + _struct.pack("<III", 1, 1, 2) + entry(DAD_, 0, 0) + entry(SANGAN_, 0, 1) \
+        + _struct.pack("<I", 0)
+    msg = _NS(id=MSG_SELECT_UNSELECT_CARD, payload=payload)
+    assert _rules().respond(msg, None, None) == _struct.pack("<ii", 1, 1)
+
+
+def test_number_prompt_is_answered_by_rule_not_random():
+    msg = _NS(id=MSG_ANNOUNCE_NUMBER, payload=bytes([0, 3]) + _struct.pack("<QQQ", 1, 2, 3))
+    r = _rules()
+    assert r.respond(msg, None, None) == _struct.pack("<i", 2) and not r.fallbacks
+    assert len(prompt_candidates(msg)) == 3

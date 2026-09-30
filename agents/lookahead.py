@@ -32,12 +32,15 @@ Phase triggers may fire again in the copy; the opponent is passive in every copy
 """
 from __future__ import annotations
 
+import itertools
 import math
 import random
 import re
 import struct
 import time
+from collections import Counter
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Callable
 from functools import lru_cache
 from pathlib import Path
@@ -51,14 +54,17 @@ from engine.constants import (LOCATION_DECK, LOCATION_HAND, LOCATION_MZONE, LOCA
                               MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
                               MSG_SELECT_EFFECTYN, MSG_SELECT_IDLECMD, MSG_SELECT_POSITION,
                               MSG_SELECT_YESNO, MSG_SPSUMMONING, MSG_SUMMONING, MSG_WIN, PHASE_END,
-                              MSG_BECOME_TARGET, MSG_CHAIN_END, MSG_CONFIRM_CARDS,
+                              MSG_ANNOUNCE_NUMBER, MSG_BECOME_TARGET, MSG_CHAIN_END, MSG_CONFIRM_CARDS,
+                              MSG_SELECT_DISFIELD, MSG_SELECT_PLACE, MSG_SELECT_TRIBUTE,
                               MSG_SELECT_UNSELECT_CARD, PHASE_MAIN2, PHASE_NAMES, TYPE_FUSION, TYPE_LINK,
                               TYPE_MONSTER, TYPE_NORMAL, TYPE_QUICKPLAY, TYPE_SYNCHRO, TYPE_TRAP, TYPE_TUNER,
                               TYPE_XYZ)
 from engine.duel import Duel
 from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTLE_TO_M2, IDLE_ACTIVATE,
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
-                             BattleCmd, IdleCmd, SelectCard, SelectChain, SelectUnselect, parse_idlecmd,
+                             AnnounceNumber, BattleCmd, IdleCmd, SelectCard, SelectChain, SelectPlace,
+                             SelectUnselect, parse_announce_number, parse_idlecmd, parse_select_place,
+                             parse_select_tribute,
                              parse_select_battlecmd, parse_select_card, parse_select_chain)
 
 #: A face-down monster we cannot see is treated as the format's typical small monster: DEF 500 is the
@@ -181,8 +187,10 @@ class Turn:
 class Rules:
     """Cheap decisions: all of them inside copies, and the non-searched ones in the real duel."""
 
-    def __init__(self, me: int, db: CardDB, rng: random.Random, profile: Profile):
+    def __init__(self, me: int, db: CardDB, rng: random.Random, profile: Profile, fallbacks: Counter | None = None):
         self.me, self.db, self.rng, self.profile = me, db, rng, profile
+        #: Prompts answered by the random-legal fallback, by message id. The target is 0 in the real duel.
+        self.fallbacks = Counter() if fallbacks is None else fallbacks
         self.fallback = RandomLegal(seed=rng.randrange(1 << 30))
         self.attack_pending = False  # the next card choice is an attack target
         self.doomed: set = set()     # (controller, location, sequence) targeted by the current chain
@@ -273,7 +281,46 @@ class Rules:
             r = self.select_unselect(msg)
             if r is not None:
                 return r
+            return self.unselect_rule(msg)
+        if msg.id == MSG_SELECT_TRIBUTE:
+            return self.tribute_rule(msg)
+        if msg.id in (MSG_SELECT_PLACE, MSG_SELECT_DISFIELD):
+            return self.place_rule(msg)
+        if msg.id == MSG_ANNOUNCE_NUMBER:
+            opts = parse_announce_number(msg.payload).options
+            return AnnounceNumber.encode(max(range(len(opts)), key=lambda i: opts[i]) if opts else 0)
+        self.fallbacks[msg.id] += 1
         return self.fallback(msg, duel)
+
+    # Fixed rules for prompts the real duel searches (see LookaheadPilot._search_prompt); inside copies
+    # and forks there is no search, so these answer - never the random fallback.
+    def _value(self, code: int, con: int) -> float:
+        """How much we would mind losing this card (ours) / want it gone (theirs): ATK for monsters."""
+        return self._atk(code) + (0 if con == self.me else 10_000)
+
+    def unselect_rule(self, msg) -> bytes:
+        """One pick at a time: pay a cost with our least valuable card; choose the opponent's best."""
+        opts = parse_unselect_options(msg.payload)
+        if not opts:
+            return SelectUnselect.finish()
+        mine = [i for i, (code, con, loc, _) in enumerate(opts) if con == self.me]
+        if len(mine) == len(opts):
+            return SelectUnselect.encode(min(mine, key=lambda i: self._atk(opts[i][0])))
+        return SelectUnselect.encode(max(range(len(opts)), key=lambda i: self._value(opts[i][0], opts[i][1])))
+
+    def tribute_rule(self, msg) -> bytes:
+        """Tribute the lowest-ATK monsters."""
+        sel = parse_select_tribute(msg.payload)
+        order = sorted(range(len(sel.codes)), key=lambda i: self._atk(sel.codes[i]))
+        return SelectCard.encode(sorted(order[:max(1, sel.min)]))
+
+    def place_rule(self, msg) -> bytes:
+        """The first legal zone, ours before theirs."""
+        sp = parse_select_place(msg.payload)
+        free = sp.available()
+        if not free:
+            return struct.pack("<i", 0)
+        return SelectPlace.encode([free[i % len(free)] for i in range(max(sp.count, 1))])
 
     def select_unselect(self, msg) -> bytes | None:
         """A cost paid with our own monsters (a Tribute, say) while one of them is already targeted by the
@@ -337,7 +384,36 @@ class GraveResources:
 
 
 STATUS_SUMMONED_THIS_TURN = 0x800 | 0x40000000     # STATUS_SUMMON_TURN | STATUS_SPSUMMON_TURN
+SEARCHED_PROMPTS = (MSG_SELECT_PLACE, MSG_SELECT_DISFIELD, MSG_SELECT_TRIBUTE, MSG_SELECT_UNSELECT_CARD,
+                    MSG_ANNOUNCE_NUMBER)
 EXTRA_DECK_TYPES = TYPE_SYNCHRO | TYPE_FUSION | TYPE_XYZ | TYPE_LINK
+
+
+def prompt_candidates(msg, cap: int = 12) -> list[bytes]:
+    """Every answer to a zone / tribute / one-at-a-time pick / number prompt worth comparing, for a search.
+    Multi-zone and large tribute prompts are cut to `cap` candidates."""
+    if msg.id in (MSG_SELECT_PLACE, MSG_SELECT_DISFIELD):
+        sp = parse_select_place(msg.payload)
+        free = sp.available()
+        if sp.count > 1:
+            return [SelectPlace.encode([free[(k + i) % len(free)] for i in range(sp.count)])
+                    for k in range(min(len(free), cap))]
+        return [SelectPlace.encode([z]) for z in free[:cap]]
+    if msg.id == MSG_SELECT_TRIBUTE:
+        sel = parse_select_tribute(msg.payload)
+        k = max(1, sel.min)
+        return [SelectCard.encode(list(c)) for c in itertools.islice(combinations(range(len(sel.codes)), k), cap)]
+    if msg.id == MSG_SELECT_UNSELECT_CARD:
+        n = len(parse_unselect_options(msg.payload))
+        out = [SelectUnselect.encode(i) for i in range(min(n, cap))]
+        # Finishing (enough picked) is an answer; *cancelling* is not - it backs out of the whole action to
+        # the menu, where the same action is chosen again: offering it looped a duel forever.
+        if msg.payload[1]:
+            out.append(SelectUnselect.finish())
+        return out
+    if msg.id == MSG_ANNOUNCE_NUMBER:
+        return [AnnounceNumber.encode(i) for i in range(len(parse_announce_number(msg.payload).options))]
+    return []
 
 
 def parse_unselect_options(payload: bytes) -> list[tuple[int, int, int, int]]:
@@ -500,6 +576,7 @@ class LookaheadPilot:
         self.responding = False   # we just took a searched response: its target choices are searched too
         self.windows: list[dict] = []   # every response prompt: options, taken/passed, timing
         self.forks = self.fork_failures = 0
+        self.lookahead_fallbacks: Counter = Counter()   # random-fallback answers inside copies and forks
         self.actions: list[dict] = []   # our Main Phase activations: turn, code, location
         self.t_copies = self.t_forks = 0.0   # wall time in lookahead copies / response-search forks
         self.gy = GraveResources(self.scripts)
@@ -557,6 +634,8 @@ class LookaheadPilot:
                 self._in_battle, self._can_bp = True, False
                 return self._remember(self._search("battle", cmd, duel), None, cmd)
         self._in_battle = False
+        if msg.id in SEARCHED_PROMPTS and msg.player == self.me:
+            return self._search_prompt(msg, duel)
         if msg.id in (MSG_SELECT_CHAIN, MSG_SELECT_EFFECTYN, MSG_SELECT_YESNO, MSG_SELECT_CARD) \
                 and msg.player == self.me:
             r = self._response(msg, duel)
@@ -564,6 +643,28 @@ class LookaheadPilot:
                 return r
         if msg.id == MSG_SELECT_CARD and self.plan and self.turn.player == self.me:
             return self._choose_card(msg, duel)
+        return self.rules.respond(msg, duel, self.turn)
+
+    def _search_prompt(self, msg, duel) -> bytes:
+        """A zone, Tribute, one-at-a-time pick or number, in the real duel: fork each answer, score it with
+        the same evaluation, take the best. The rule the forks use is the fallback if every fork fails."""
+        if msg.id == MSG_SELECT_UNSELECT_CARD:
+            r = self.rules.select_unselect(msg)   # paying with a doomed monster needs no search
+            if r is not None:
+                return r
+        cands = prompt_candidates(msg)
+        if len(cands) == 1:
+            return cands[0]
+        if cands:
+            self.searches += 1
+            best, best_score = None, float("-inf")
+            for response in cands:
+                sc = Fork(self, duel, msg).evaluate(response)
+                self.fork_failures += sc == float("-inf")
+                if sc > best_score:
+                    best, best_score = response, sc
+            if best is not None:
+                return best
         return self.rules.respond(msg, duel, self.turn)
 
     # -- response prompts (opponent's turn, any Battle Phase)
@@ -837,7 +938,8 @@ class _Rollout:
         self.turn = Turn(normal_summoned=real.normal_summoned,
                          monster_effects_used=set(real.monster_effects_used), attacked=set(real.attacked))
         self.can_attack = snap["can_attack"]
-        self.rules = Rules(0, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile)
+        self.rules = Rules(0, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile,
+                           fallbacks=pilot.lookahead_fallbacks)
         self.applied = self.done = False
 
     def __call__(self, msg, duel):
@@ -974,7 +1076,8 @@ class Fork:
         self.log = list(duel.responses)
         self.fed = 0
         self.applied = self.done = self.desync = False
-        self.rules = Rules(pilot.me, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile)
+        self.rules = Rules(pilot.me, pilot.db, random.Random(pilot.rng.randrange(1 << 30)), pilot.profile,
+                           fallbacks=pilot.lookahead_fallbacks)
         self.other = RandomLegal(seed=pilot.rng.randrange(1 << 30))
         self.candidate = None
         self.revealed = False
