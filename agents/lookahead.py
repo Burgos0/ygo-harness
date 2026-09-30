@@ -35,11 +35,12 @@ from __future__ import annotations
 import random
 import re
 import struct
-import tempfile
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
 from agents.random_legal import RandomLegal
 from engine.board import query_field, read_board
@@ -56,7 +57,6 @@ from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTL
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
                              BattleCmd, IdleCmd, SelectCard, SelectChain, parse_idlecmd,
                              parse_select_battlecmd, parse_select_card, parse_select_chain)
-from engine.puzzle import Puzzle
 
 #: A face-down monster we cannot see is treated as the format's typical small monster: DEF 500 is the
 #: median DEF of the 46,580 level 1-4 main-deck monster copies in the TopDeck Edison lists (quartiles
@@ -279,7 +279,8 @@ class GraveResources:
 
     def __call__(self, code: int) -> bool:
         if code not in self.cache:
-            body = self.scripts.read(f"c{code}.lua") or b""
+            read = getattr(self.scripts, "source", self.scripts.read)   # source text, not compiled bytecode
+            body = read(f"c{code}.lua") or b""
             self.cache[code] = bool(self.GY_RANGE.search(body))
         return self.cache[code]
 
@@ -371,6 +372,7 @@ class LookaheadPilot:
         self.responding = False   # we just took a searched response: its target choices are searched too
         self.windows: list[dict] = []   # every response prompt: options, taken/passed, timing
         self.forks = self.fork_failures = 0
+        self.t_copies = self.t_forks = 0.0   # wall time in lookahead copies / response-search forks
         self.gy = GraveResources(self.scripts)
         self.ca_log: dict[int, float] = {}   # turn number -> card advantage at its start (our view)
         self.event = "phase"
@@ -645,10 +647,17 @@ class LookaheadPilot:
                 "turn": self.turn}
 
     def _evaluate(self, snap: dict, kind: str, key: tuple, picks=(), choice=None) -> float:
+        t = time.perf_counter()
+        try:
+            return self._evaluate_copy(snap, kind, key, picks, choice)
+        finally:
+            self.t_copies += time.perf_counter() - t
+
+    def _evaluate_copy(self, snap: dict, kind: str, key: tuple, picks=(), choice=None) -> float:
         self.copies += 1
-        path = Path(tempfile.gettempdir()) / f"lookahead_copy_{id(self)}.lua"
-        path.write_text(snap["lua"])
-        copy = Duel.from_puzzle(Puzzle.load(path), lib=self.lib, carddb=self.db, scripts=self.scripts)
+        # Duel.load_puzzle needs only the source and a chunk name - no temp file, no Puzzle.load parse.
+        field = SimpleNamespace(path=Path(f"lookahead_copy_{id(self)}.lua"), source=snap["lua"].encode())
+        copy = Duel.from_puzzle(field, lib=self.lib, carddb=self.db, scripts=self.scripts)
         roll = _Rollout(self, snap, kind, key, picks, choice)
         with copy as d:
             read = d._messages
@@ -867,6 +876,13 @@ class Fork:
         ])
 
     def evaluate(self, candidate: bytes) -> float:
+        t = time.perf_counter()
+        try:
+            return self._evaluate(candidate)
+        finally:
+            self.pilot.t_forks += time.perf_counter() - t
+
+    def _evaluate(self, candidate: bytes) -> float:
         p = self.pilot
         p.forks += 1
         self.candidate = candidate

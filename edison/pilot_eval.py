@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing as mp
+import os
 import sys
 import time
 from collections import Counter
@@ -37,7 +38,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", default="lightsworn")
     ap.add_argument("--duels", type=int, default=200)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--tag", default="eval")
     ap.add_argument("--export", type=int, default=0, help="also export this many sample duels (wins or losses)")
     ap.add_argument("--no-respond", action="store_true", help="pilot without response search (the old fixed rule)")

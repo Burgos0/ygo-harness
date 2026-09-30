@@ -21,9 +21,12 @@ _ctx: dict = {}
 
 
 def init():
-    from engine.carddb import CardDB
+    from edison.fastload import CachedCardDB, CompiledScripts
+    from edison.provider import EdisonScriptProvider
     from engine.ocgapi import load
-    _ctx.update(lib=load(), db=CardDB(), decks={})
+    lib = load()
+    # Scripts compiled once per process and card rows cached: behaviour-neutral, see edison/fastload.py.
+    _ctx.update(lib=lib, db=CachedCardDB(), scripts=CompiledScripts(EdisonScriptProvider(), lib), decks={})
 
 
 def deck(name: str):
@@ -65,7 +68,7 @@ def _policy(spec: str, seat: int, seed: int, respond: bool = True):
     if spec == "random":
         return RandomLegal(seed=seed)
     return LookaheadPilot(PROFILES[spec], seat=seat, seed=seed, lib=_ctx["lib"], carddb=_ctx["db"],
-                          respond_search=respond)
+                          scripts=_ctx["scripts"], respond_search=respond)
 
 
 def win_reason(messages) -> int:
@@ -82,7 +85,7 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
     pols = [Traced(_policy(specs[s], s, key, respond), s, rejected) for s in (0, 1)]
     seeds = (key + 1, key + 7, key + 13, key + 29)
     t = time.perf_counter()
-    with EdisonDuel(seeds, lib=_ctx["lib"], carddb=_ctx["db"]) as d:
+    with EdisonDuel(seeds, lib=_ctx["lib"], carddb=_ctx["db"], scripts=_ctx["scripts"]) as d:
         for s in (0, 1):
             dk = deck(decks[s])
             d.load_deck(s, dk.main, dk.extra, shuffle_seed=key + 500 * s)
@@ -98,6 +101,8 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
                "ca": {s: p.inner.ca_log for s, p in enumerate(pols) if hasattr(p.inner, "ca_log")},
                "forks": sum(getattr(p.inner, "forks", 0) for p in pols),
                "fork_failures": sum(getattr(p.inner, "fork_failures", 0) for p in pols),
+               "t_copies": sum(getattr(p.inner, "t_copies", 0.0) for p in pols),
+               "t_forks": sum(getattr(p.inner, "t_forks", 0.0) for p in pols),
                "seconds": time.perf_counter() - t}
         if export:
             from viz.replay import build_yrp
