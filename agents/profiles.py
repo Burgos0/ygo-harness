@@ -6,6 +6,8 @@ progress hook: win-condition setup a slow deck spends turns on, scored even with
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from agents.lookahead import Profile, Weights
 from engine.constants import ATTRIBUTE_DARK, TYPE_MONSTER
 
@@ -62,4 +64,34 @@ BLACKWING_DAD = Profile(
     progress=_dark_armed_dragon,
 )
 
-PROFILES = {"lightsworn": LIGHTSWORN, "blackwing_dad": BLACKWING_DAD}
+# ---------------------------------------------------------------- v1: the evaluation before c62c3c6
+# Kept for attribution runs (one side on the old evaluation, the other on the new). v1 = the current
+# score() with every term added in c62c3c6 at zero weight, and the progress bonuses as they were then.
+
+_V1_OFF = dict(gy_resource=0.0, hold=0.0, key_card=0.0, op_board_atk=0.0, lethal_threat=0.0, low_lp=0.0)
+
+
+def _judgment_dragon_v1(mine, theirs, db) -> float:
+    names = {c.code for c in mine.grave if c and "Lightsworn" in db.archetypes(c.code)}
+    s = 10.0 * min(len(names), 4)
+    if len(names) >= 4 and any(c and db.name(c.code) == "Judgment Dragon" for c in mine.hand):
+        s += 80.0
+    return s
+
+
+def _dark_armed_dragon_v1(mine, theirs, db) -> float:
+    darks = sum(1 for c in mine.grave if c and (r := db.row(c.code)) and r[4] & TYPE_MONSTER
+                and r[9] & ATTRIBUTE_DARK)
+    s = 10.0 * min(darks, 3) - 15.0 * max(0, darks - 3)
+    if darks == 3 and any(c and db.name(c.code) == "Dark Armed Dragon" for c in mine.hand):
+        s += 80.0
+    return s
+
+
+LIGHTSWORN_V1 = replace(LIGHTSWORN, weights=Weights(**_V1_OFF), key_cards=frozenset(),
+                        progress=_judgment_dragon_v1)
+BLACKWING_DAD_V1 = replace(BLACKWING_DAD, weights=Weights(urgency_deck=0, **_V1_OFF), key_cards=frozenset(),
+                           progress=_dark_armed_dragon_v1)
+
+PROFILES = {"lightsworn": LIGHTSWORN, "blackwing_dad": BLACKWING_DAD,
+            "lightsworn@v1": LIGHTSWORN_V1, "blackwing_dad@v1": BLACKWING_DAD_V1}

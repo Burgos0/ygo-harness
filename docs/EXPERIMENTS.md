@@ -380,3 +380,44 @@ Main Phase 1 15% -> 24% (Torrential 218 -> 264, Solemn 146 -> 177 - more used on
 The upgrade moved the simulation *away* from the real number: whatever it gave Blackwing-DAD, it gave
 Lightsworn more. Both decks run the same evaluation, so this does not say which side's play improved;
 an ablation (new Lightsworn vs previous Blackwing-DAD and the reverse) is the way to find out. Not run.
+
+## Speed pass, and attributing the 58.8% -> 64.0% shift (2026-09-29)
+
+**Speed** (no behaviour change). Profile of a 50-match Lightsworn vs Blackwing-DAD run: lookahead copies
+58% of game time, response-search forks 39%, the real duel 3%; inside those, ~40% of all time was
+re-reading and re-compiling Lua for each short-lived duel. `edison/fastload.py` compiles each script
+once per process with the core's own Lua (bytecode via `string.dump`) and caches card rows; copies no
+longer go through a temp file and `Puzzle.load`. **19.4 -> 46.8 matches/min** on 8 cores; 200 matches
+on the same seeds identical to c62c3c6 in every game, winner, turn count and Blackwing-DAD chain
+decision. Remaining time: board-query parsing in `engine/board.py` (~a third; engine code, untouched).
+Pass-only prompts were already never searched (0 of 43,304 windows).
+
+**Attribution.** `lightsworn@v1` / `blackwing_dad@v1` in `agents/profiles.py` are the evaluation before
+c62c3c6 (the new terms at zero weight, the old progress bonuses). Control: v1 vs v1 on the first 200
+seeds reproduces the 58.8% run's first 200 matches *exactly*, so the v1 profiles are the old pilots.
+200 Bo3 each, same seeds (match keys 100000-101992), Lightsworn's match win:
+
+| Lightsworn eval \ Blackwing-DAD eval | old (v1) | new |
+|---|---|---|
+| **old (v1)** | 62.5% [55.6, 68.9] (= the 58.8% run's first 200) | 62.0% [55.1, 68.4] |
+| **new** | 65.0% [58.2, 71.3] | 67.0% [60.2, 73.1] (= the 64.0% run's first 200) |
+
+Same seeds, so matches can be paired. Switching one side's evaluation flips 25-30% of matches *in both
+directions* - the games are chaotic under any change - and no switch is distinguishable from noise
+(exact sign test on flipped matches): new Lightsworn eval 32 flips its way vs 27 against (p=0.60); new
+Blackwing-DAD eval 29 vs 28 (p=1.00); both switched, 41 vs 32 (p=0.35). Direction, not proof: the
+new evaluation helps Lightsworn by ~+2.5 to +5 points and does nothing measurable for Blackwing-DAD.
+The earlier "58.8% -> 64.0%" at n=500 is ~1.7 standard errors and should not be read as the upgrade
+making the simulation worse.
+
+**Traps unused at game end** (`end_traps` per game; set = face-down in the S/T zones):
+
+| | games lost | set + in hand, per lost game | lost games ending with >= 1 | per won game |
+|---|---|---|---|---|
+| Blackwing-DAD v1 (vs Lightsworn v1) | 297 | 0.58 + 0.04 | 46% | 0.97 + 0.01 |
+| Blackwing-DAD new (vs Lightsworn v1) | 292 | 0.67 + 0.05 | 47% | 1.05 + 0.01 |
+| Blackwing-DAD new (vs Lightsworn new) | 307 | 0.63 + 0.06 | 48% | 0.87 + 0.00 |
+| Lightsworn (any), for scale | 201-221 | 0.06-0.19 + 0.01 | 7-19% | 0.19-0.29 |
+
+Nearly half of Blackwing-DAD's lost games end with a trap still set. The holding value added in c62c3c6
+makes that slightly more common, not less.

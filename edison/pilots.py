@@ -94,10 +94,20 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
         d.start()
         r = d.run(pols[0], max_steps=300_000, retry_limit=300, policy1=pols[1])
         turns = next((p.inner.turn.number for p in pols if hasattr(p.inner, "turn")), None)
+        # Traps each side still held when the duel ended: set (face-down in the S/T zones) or in hand.
+        from engine.board import read_board
+        from engine.constants import TYPE_TRAP
+        is_trap = lambda c: c and (_ctx["db"].row(c.code) or (0,) * 5)[4] & TYPE_TRAP
+        end_traps = {}
+        for s in (0, 1):
+            b = read_board(d, s)
+            end_traps[s] = {"set": sum(1 for c in b.spells if is_trap(c) and not c.position & 0x5),
+                            "hand": sum(1 for c in b.hand if is_trap(c))}
         out = {"key": key, "specs": list(specs), "decks": list(decks), "seeds": list(seeds),
                "shuffles": [key, key + 500], "winner": r["winner"], "reason": win_reason(r["messages"]),
                "turns": turns, "steps": r["steps"], "retries": r["retries"], "rejected": rejected,
                "windows": {s: p.inner.windows for s, p in enumerate(pols) if hasattr(p.inner, "windows")},
+               "end_traps": end_traps,
                "ca": {s: p.inner.ca_log for s, p in enumerate(pols) if hasattr(p.inner, "ca_log")},
                "forks": sum(getattr(p.inner, "forks", 0) for p in pols),
                "fork_failures": sum(getattr(p.inner, "fork_failures", 0) for p in pols),

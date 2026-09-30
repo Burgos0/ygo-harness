@@ -44,7 +44,8 @@ def play_match(m: int, a: str, b: str, respond: bool = True) -> dict:
                       "retries": r["retries"], "rejected": r["rejected"], "seconds": round(r["seconds"], 2),
                       "windows": {({0: first, 1: second}[int(s)]): w for s, w in r["windows"].items()},
                       "forks": r["forks"], "t_copies": round(r["t_copies"], 3), "t_forks": round(r["t_forks"], 3),
-                      "ca": {({0: first, 1: second}[int(s)]): c for s, c in r["ca"].items()}})
+                      "ca": {({0: first, 1: second}[int(s)]): c for s, c in r["ca"].items()},
+                      "end_traps": {({0: first, 1: second}[s]): t for s, t in r["end_traps"].items()}})
         if max(wins[a], wins[b]) == 2:
             break
         first = second if winner == first else (first if winner == second else second)
@@ -134,6 +135,15 @@ def main() -> int:
         v = [g["ca"][who][5] for g in games if 5 in g.get("ca", {}).get(who, {})]
         if v:
             lines.append(f"card advantage at turn 5, {who}: {sum(v) / len(v):+.2f} cards (mean of {len(v)} games)")
+    for who in (a, b):   # traps still set / in hand when the game ended
+        for res, pick in (("lost", lambda g: g["winner"] not in (who, None)), ("won", lambda g: g["winner"] == who)):
+            gs = [g for g in games if pick(g) and "end_traps" in g]
+            if gs:
+                st = sum(g["end_traps"][who]["set"] for g in gs) / len(gs)
+                hd = sum(g["end_traps"][who]["hand"] for g in gs) / len(gs)
+                unused = sum(1 for g in gs if g["end_traps"][who]["set"] + g["end_traps"][who]["hand"])
+                lines.append(f"unused traps at game end, {who} {res} ({len(gs)} games): {st:.2f} set + {hd:.2f} in hand"
+                             f" per game; {unused / len(gs):.0%} of these games ended with at least one")
     from engine.constants import WIN_REASON_DECKOUT, WIN_REASON_LP
     reasons = Counter({WIN_REASON_LP: "LP to 0", WIN_REASON_DECKOUT: "deck-out"}.get(g["reason"], f"other ({g['reason']})")
                       for g in games)
