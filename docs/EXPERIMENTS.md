@@ -471,3 +471,27 @@ per game); Solemn Judgment 108 -> 164, Trap Dustshoot 82 -> 116, Gorz 12 -> 21, 
 255 -> 234, others within noise. Lightsworn: Trap Dustshoot 12 -> **71** - the hidden-card term applies
 to both decks, and Lightsworn plays Dustshoot too - traps 0.32 -> 0.42 per game. Blackwing-DAD lost
 games ending with a trap still set: 40% -> 35%.
+
+## Known sim biases
+
+Read every simulated matchup number against these. None of them is corrected for.
+
+- **No side decking.** Real Edison matches are Bo3 with a 15-card side deck swapped in for games 2
+  and 3; the simulation plays the main deck in all three games. Matchup-specific side cards (and a
+  deck's ability to side against its bad matchups) are absent.
+- **One decklist per deck.** Each archetype is one list (`edison/decks/`); the TopDeck numbers
+  aggregate hundreds of builds (549 Blackwing-DAD, 372 Lightsworn), some tuned against each other.
+- **The lookahead assumes a passive opponent.** Copies and forks never let the opponent respond, so
+  lines that walk into a set trap or a hand trap are overvalued and cautious lines undervalued -
+  equally for both pilots, but not equally for both decks: a deck that wins through the opponent's
+  turn (traps) is modelled worse than one that wins on its own turn.
+- **Real data includes player-skill selection.** Who picks which deck is not random, and players differ
+  in skill; the simulation has two fixed pilots of whatever skill the code has.
+- Smaller: the real data includes match draws (time), which the simulation never produces; games 2-3
+  here go loser-first by convention; the opponent's face-down Spells/Traps are not scrubbed in forks.
+
+**Generic fixes lift both decks.** Every evaluation change so far is deck-agnostic, so it improves both
+pilots, and the Lightsworn vs Blackwing-DAD gap to the real 45.1% has held at **+15 to +20 points**
+through all of them (58.8% response search, 64.0% card advantage, 60.0% hold scaling, 65.5% tuning
+round 1; paired tests on the same seeds put every step within noise except hold scaling, p = 0.044).
+Closing that gap is not a matter of one more generic term; the biases above are the candidates.
