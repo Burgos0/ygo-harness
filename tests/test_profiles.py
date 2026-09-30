@@ -74,10 +74,11 @@ NECRO_GARDNA, SANGAN = 4906301, 26202165
 DB = CardDB()
 
 
-def board(grave=(), hand=(), monsters=(), spells=()):
-    card = lambda c: NS(code=c, position=0x1, attack=0)
+def board(grave=(), hand=(), monsters=(), spells=(), extra=(), banished=()):
+    card = lambda c: NS(code=c, position=0x1, attack=(DB.row(c) or (0,) * 6)[5] if c else 0)
     return NS(grave=[card(c) for c in grave], hand=[card(c) for c in hand],
-              monsters=[card(c) for c in monsters], spells=[card(c) for c in spells])
+              monsters=[card(c) for c in monsters], spells=[card(c) for c in spells],
+              extra=[card(c) for c in extra], banished=[card(c) for c in banished])
 
 
 def test_grave_resources_come_from_the_cards_own_script():
@@ -155,3 +156,32 @@ def test_lp_cost_is_cheap_far_from_lethal_and_dear_near_it():
     far = v(8000, 1000) - v(4000, 1000)
     near = v(3000, 2700) - v(1500, 2700)
     assert far < 10 < 60 < near, (far, near)
+
+
+VAYU, SIROCCO, ARMED_WING, ARMOR_MASTER, RFTDD = 72714392, 75498415, 76913983, 69031175, 27174286
+
+
+def test_dad_vayu_with_a_partner_is_a_live_synchro():
+    prog, ctx = PROFILES["blackwing_dad"].progress, NS(my_lp=8000, op_lp=8000)
+    extra = [ARMED_WING, ARMOR_MASTER]
+    alone = prog(board(grave=[VAYU], extra=extra), board(), DB, ctx)
+    live = prog(board(grave=[VAYU, SIROCCO], extra=extra), board(), DB, ctx)
+    no_target = prog(board(grave=[VAYU, SIROCCO], extra=[ARMOR_MASTER]), board(), DB, ctx)
+    assert live > alone and live > no_target, "Vayu (1) + Sirocco (5) with Armed Wing (6) in the Extra is live"
+
+
+def test_dad_dead_blackwing_synchro_is_fuel_with_vayu():
+    prog, ctx = PROFILES["blackwing_dad"].progress, NS(my_lp=8000, op_lp=8000)
+    fuel = prog(board(grave=[VAYU, ARMED_WING], extra=[ARMOR_MASTER]), board(), DB, ctx)
+    plain = prog(board(grave=[VAYU, SIROCCO], extra=[ARMED_WING]), board(), DB, ctx)
+    assert fuel - plain >= 40, "Armed Wing in the GY climbs to Armor Master: worth about half a card back"
+
+
+def test_dad_rftdd_lethal_is_scored():
+    prog = PROFILES["blackwing_dad"].progress
+    banished = [ARMED_WING, ARMOR_MASTER, SIROCCO]               # 2300 + 2500 + 2000 = 6800
+    with_rftdd = lambda op_lp: prog(board(spells=[RFTDD], banished=banished), board(), DB,
+                                    NS(my_lp=4000, op_lp=op_lp))
+    without = prog(board(banished=banished), board(), DB, NS(my_lp=4000, op_lp=6000))
+    assert with_rftdd(6000) - without >= 150, "6800 banished ATK vs 6000 LP and no blockers: lethal"
+    assert with_rftdd(6000) > with_rftdd(9000), "short of lethal is only progress"

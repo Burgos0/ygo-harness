@@ -45,7 +45,8 @@ def play_match(m: int, a: str, b: str, respond: bool = True) -> dict:
                       "windows": {({0: first, 1: second}[int(s)]): w for s, w in r["windows"].items()},
                       "forks": r["forks"], "t_copies": round(r["t_copies"], 3), "t_forks": round(r["t_forks"], 3),
                       "ca": {({0: first, 1: second}[int(s)]): c for s, c in r["ca"].items()},
-                      "end_traps": {({0: first, 1: second}[s]): t for s, t in r["end_traps"].items()}})
+                      "end_traps": {({0: first, 1: second}[s]): t for s, t in r["end_traps"].items()},
+                      "actions": {({0: first, 1: second}[s]): a for s, a in r["actions"].items()}})
         if max(wins[a], wins[b]) == 2:
             break
         first = second if winner == first else (first if winner == second else second)

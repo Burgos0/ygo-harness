@@ -108,6 +108,7 @@ def play(key: int, specs: tuple[str, str], decks: tuple[str, str], export: bool 
                "turns": turns, "steps": r["steps"], "retries": r["retries"], "rejected": rejected,
                "windows": {s: p.inner.windows for s, p in enumerate(pols) if hasattr(p.inner, "windows")},
                "end_traps": end_traps,
+               "actions": {s: p.inner.actions for s, p in enumerate(pols) if hasattr(p.inner, "actions")},
                "ca": {s: p.inner.ca_log for s, p in enumerate(pols) if hasattr(p.inner, "ca_log")},
                "forks": sum(getattr(p.inner, "forks", 0) for p in pols),
                "fork_failures": sum(getattr(p.inner, "fork_failures", 0) for p in pols),

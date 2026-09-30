@@ -51,13 +51,14 @@ from engine.constants import (LOCATION_DECK, LOCATION_HAND, LOCATION_MZONE, LOCA
                               MSG_SELECT_BATTLECMD, MSG_SELECT_CARD, MSG_SELECT_CHAIN,
                               MSG_SELECT_EFFECTYN, MSG_SELECT_IDLECMD, MSG_SELECT_POSITION,
                               MSG_SELECT_YESNO, MSG_SPSUMMONING, MSG_SUMMONING, MSG_WIN, PHASE_END,
-                              MSG_CONFIRM_CARDS, PHASE_MAIN2, PHASE_NAMES, TYPE_FUSION, TYPE_LINK,
+                              MSG_BECOME_TARGET, MSG_CHAIN_END, MSG_CONFIRM_CARDS,
+                              MSG_SELECT_UNSELECT_CARD, PHASE_MAIN2, PHASE_NAMES, TYPE_FUSION, TYPE_LINK,
                               TYPE_MONSTER, TYPE_NORMAL, TYPE_QUICKPLAY, TYPE_SYNCHRO, TYPE_TRAP, TYPE_TUNER,
                               TYPE_XYZ)
 from engine.duel import Duel
 from engine.messages import (BATTLE_ACTIVATE, BATTLE_ATTACK, BATTLE_TO_EP, BATTLE_TO_M2, IDLE_ACTIVATE,
                              IDLE_MSET, IDLE_SPSUMMON, IDLE_SSET, IDLE_SUMMON, IDLE_TO_BP, IDLE_TO_EP,
-                             BattleCmd, IdleCmd, SelectCard, SelectChain, parse_idlecmd,
+                             BattleCmd, IdleCmd, SelectCard, SelectChain, SelectUnselect, parse_idlecmd,
                              parse_select_battlecmd, parse_select_card, parse_select_chain)
 
 #: A face-down monster we cannot see is treated as the format's typical small monster: DEF 500 is the
@@ -136,8 +137,12 @@ class Profile:
     hold: frozenset = frozenset()            # passcodes never activated by the pilot (e.g. D.D. Crow)
     attack_position_atk: int = 1600          # Summon in Attack Position at this ATK or more
     key_cards: frozenset = frozenset()       # card names worth holding in hand (Weights.key_card each)
-    progress: Callable | None = None         # progress(mine, theirs, db) -> score for win-condition setup that
-                                             # shows no immediate board change (a slow deck's turns)
+    progress: Callable | None = None         # progress(mine, theirs, db, ctx) -> score for win-condition setup
+                                             # that shows no immediate board change (a slow deck's turns);
+                                             # ctx has my_lp, op_lp
+    always_consider: frozenset = frozenset() # card names never cut from the Main Phase candidate list (unlike
+                                             # `engine`, not auto-activated inside copies)
+    hold_factor: tuple = ()                  # (card name, multiplier) pairs on that card's holding value
 
 
 class EndOfTurn(Exception):
@@ -180,6 +185,7 @@ class Rules:
         self.me, self.db, self.rng, self.profile = me, db, rng, profile
         self.fallback = RandomLegal(seed=rng.randrange(1 << 30))
         self.attack_pending = False  # the next card choice is an attack target
+        self.doomed: set = set()     # (controller, location, sequence) targeted by the current chain
 
     def name(self, code: int) -> str:
         return self.db.name(code) or ""
@@ -263,7 +269,20 @@ class Rules:
             r = self.select_card(msg, duel)
             if r is not None:
                 return r
+        if msg.id == MSG_SELECT_UNSELECT_CARD:
+            r = self.select_unselect(msg)
+            if r is not None:
+                return r
         return self.fallback(msg, duel)
+
+    def select_unselect(self, msg) -> bytes | None:
+        """A cost paid with our own monsters (a Tribute, say) while one of them is already targeted by the
+        opponent's chain: pay with the doomed one - it is lost either way. Otherwise None (the fallback)."""
+        opts = parse_unselect_options(msg.payload)
+        doomed = [i for i, (_, con, loc, seq) in enumerate(opts) if (con, loc, seq) in self.doomed]
+        if doomed and all(con == self.me and loc == LOCATION_MZONE for _, con, loc, _ in opts):
+            return SelectUnselect.encode(doomed[0])
+        return None
 
     # helpers
     def _used(self, c, turn: Turn) -> bool:
@@ -319,6 +338,29 @@ class GraveResources:
 
 STATUS_SUMMONED_THIS_TURN = 0x800 | 0x40000000     # STATUS_SUMMON_TURN | STATUS_SPSUMMON_TURN
 EXTRA_DECK_TYPES = TYPE_SYNCHRO | TYPE_FUSION | TYPE_XYZ | TYPE_LINK
+
+
+def parse_unselect_options(payload: bytes) -> list[tuple[int, int, int, int]]:
+    """MSG_SELECT_UNSELECT_CARD's selectable cards: (code, controller, location, sequence) each (playerop.cpp:
+    u8 player, u8 finishable, u8 cancelable, u32 min, u32 max, u32 n, n x (u32 code + 10-byte loc_info))."""
+    (n,) = struct.unpack_from("<I", payload, 11)
+    out = []
+    for i in range(n):
+        off = 15 + 14 * i
+        code, con, loc, seq = struct.unpack_from("<IBBI", payload, off)
+        out.append((code, con, loc, seq))
+    return out
+
+
+def track_targets(m, doomed: set) -> None:
+    """Keep `doomed` = cards targeted by the chain being built (MSG_BECOME_TARGET), until it resolves."""
+    if m.id == MSG_BECOME_TARGET:
+        (n,) = struct.unpack_from("<I", m.payload, 0)
+        for i in range(n):
+            con, loc, seq = struct.unpack_from("<BBI", m.payload, 4 + 10 * i)
+            doomed.add((con, loc, seq))
+    elif m.id == MSG_CHAIN_END:
+        doomed.clear()
 
 
 def reveals_hand(m, player: int) -> bool:
@@ -388,8 +430,10 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     def is_quick(code):
         t = (db.row(code) or (0,) * 5)[4]
         return bool(t & TYPE_TRAP or t & TYPE_QUICKPLAY)
-    held = (sum(1 for c in mine.spells if c and not c.position & 0x5)
-            + sum(1 for c in mine.hand if c and is_quick(c.code)))
+    factor = dict(profile.hold_factor)
+    f = lambda c: factor.get(db.name(c.code), 1.0)
+    held = (sum(f(c) for c in mine.spells if c and not c.position & 0x5)
+            + sum(f(c) for c in mine.hand if c and is_quick(c.code)))
     op_set = hidden_opp_set + sum(1 for c in theirs.spells if c and not c.position & 0x5)
     scale = hold_scale(mine, theirs, w)
     s += w.hold * (scale * held - op_set)
@@ -429,7 +473,7 @@ def score(duel, me: int, db: CardDB, profile: Profile, hidden_opp_hand: int, hid
     if deck < w.low_deck:
         s -= w.low_deck_penalty * (w.low_deck - deck)
     if profile.progress:                                   # win-condition setup (slow decks)
-        s += profile.progress(mine, theirs, db)
+        s += profile.progress(mine, theirs, db, SimpleNamespace(my_lp=my_lp, op_lp=op_lp))
     return s
 
 
@@ -456,6 +500,7 @@ class LookaheadPilot:
         self.responding = False   # we just took a searched response: its target choices are searched too
         self.windows: list[dict] = []   # every response prompt: options, taken/passed, timing
         self.forks = self.fork_failures = 0
+        self.actions: list[dict] = []   # our Main Phase activations: turn, code, location
         self.t_copies = self.t_forks = 0.0   # wall time in lookahead copies / response-search forks
         self.gy = GraveResources(self.scripts)
         self.ca_log: dict[int, float] = {}   # turn number -> card advantage at its start (our view)
@@ -491,6 +536,7 @@ class LookaheadPilot:
                     self.event = EVENTS[m.id]
                 elif m.id in (MSG_NEW_PHASE, MSG_NEW_TURN, MSG_SELECT_IDLECMD, MSG_SELECT_BATTLECMD):
                     self.event = "phase"
+                track_targets(m, self.rules.doomed)
             return batch
         duel._messages = observed
 
@@ -583,7 +629,8 @@ class LookaheadPilot:
             "phase": PHASE_NAMES.get(duel.phase, str(duel.phase)), "event": event, "forced": ch.forced,
             "options": [o.code for o in ch.options], "trap_options": sum(1 for t in types if t & TYPE_TRAP),
             "taken": ch.options[i].code if 0 <= i < len(ch.options) else None,
-            "taken_trap": bool(0 <= i < len(ch.options) and types[i] & TYPE_TRAP), "searched": searched})
+            "taken_trap": bool(0 <= i < len(ch.options) and types[i] & TYPE_TRAP), "searched": searched,
+            "mine_targeted": sum(1 for con, loc, _ in self.rules.doomed if con == self.me and loc == LOCATION_MZONE)})
 
     def _choose_card(self, msg, duel) -> bytes:
         """A card choice during our turn (search, discard, revive target...): lookahead over the options.
@@ -617,6 +664,9 @@ class LookaheadPilot:
                 self.turn.normal_summoned = True
             if kind == IDLE_ACTIVATE and idle.activatable[index].location == LOCATION_MZONE:
                 self.turn.monster_effects_used.add(idle.activatable[index].code)
+            if kind == IDLE_ACTIVATE:
+                c = idle.activatable[index]
+                self.actions.append({"turn": self.turn.number, "code": c.code, "location": c.location})
         if battle is not None:
             k, i = struct.unpack("<i", response)[0] & 0xFFFF, struct.unpack("<i", response)[0] >> 16
             if k == BATTLE_ATTACK:
@@ -642,7 +692,8 @@ class LookaheadPilot:
                     seen.add(key)
                     out.append((IdleCmd.encode(t, i), key))
             # engine cards first when the candidate list must be cut
-            out.sort(key=lambda x: x[1][1] and self.db.name(x[1][1]) not in self.profile.engine)
+            keep = self.profile.engine | self.profile.always_consider
+            out.sort(key=lambda x: x[1][1] and self.db.name(x[1][1]) not in keep)
             out = out[: self.max_candidates]
             if cmd.to_bp:
                 out.append((IdleCmd.encode(IDLE_TO_BP), ("to_bp",)))
@@ -987,6 +1038,8 @@ class Fork:
 
             def watched():
                 batch = read()
+                for m in batch:
+                    track_targets(m, self.rules.doomed)
                 if self.applied:
                     for m in batch:
                         if m.id in (MSG_WIN, MSG_NEW_TURN):

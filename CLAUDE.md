@@ -280,6 +280,14 @@ error.
     `reseted_effects`, so pending triggers do not dangle.
     `tests/test_response_search.py` guards both.
 
+29. **A prompt the pilot has no rule for is answered by random-legal, and for
+    some prompts that is not random at all.** `RandomLegal` answers
+    `MSG_SELECT_UNSELECT_CARD` with index 0, so every cost paid through
+    `Group.SelectUnselect` (Icarus Attack's Tribute, many material choices)
+    silently took the first card listed. It looked like a strategic choice
+    in replays. Before blaming a pilot's judgement for a card choice, check
+    which code path answered that prompt.
+
 ## Models
 
 See `llm/models.yaml`. Two findings worth not re-deriving:

@@ -495,3 +495,37 @@ pilots, and the Lightsworn vs Blackwing-DAD gap to the real 45.1% has held at **
 through all of them (58.8% response search, 64.0% card advantage, 60.0% hold scaling, 65.5% tuning
 round 1; paired tests on the same seeds put every step within noise except hold scaling, p = 0.044).
 Closing that gap is not a matter of one more generic term; the biases above are the candidates.
+
+## Tuning round 2: Blackwing-DAD profile from an expert guide (2026-09-30)
+
+Guide: `docs/guides/blackwing-dad.md`. All card knowledge is in `agents/profiles.py` (`_blackwing_dad`);
+`lookahead.py` gained only generic hooks, each needed by one guide item:
+- `Profile.always_consider` (never cut from the Main Phase candidates, not auto-activated in copies) -
+  Vayu and Return from the Different Dimension;
+- `Profile.hold_factor` (per-card holding value) - Icarus Attack at 0.5 (plain 2-for-2 acceptable);
+- progress hooks receive LP (`ctx.my_lp`, `ctx.op_lp`) - the RftDD lethal check;
+- target tracking (`MSG_BECOME_TARGET` until `MSG_CHAIN_END`) and a rule for `MSG_SELECT_UNSELECT_CARD`:
+  a cost paid with our own monsters while one is targeted by the chain pays with the doomed one.
+  **Found on the way:** the pilot had no rule for that prompt, so Icarus Attack's Tribute (it goes
+  through `Group.SelectUnselect`) fell through to random-legal, which always answers index 0 - the
+  first Winged Beast listed, whichever it was. Outside that one case the answer is unchanged.
+- a per-duel log of Main Phase activations (`actions`) and `mine_targeted` in the chain-window log.
+
+Profile: Vayu in GY +20 each (up to 2); a live Vayu Synchro (a non-Tuner Blackwing partner whose Level + 1
+is a Blackwing Synchro in the Extra) +60; each dead Blackwing Synchro Vayu can climb from +50 (half a
+card back); DARKs toward exactly 3, the excess penalty halved when a Vayu use brings it back to 3; RftDD
+available: up to +60 for banished ATK (free zones, blockers take our strongest) against their LP, +150
+when that is lethal. The list has no Blizzard, so that part of the guide has nothing to act on.
+
+`tests/test_decisions.py` still passes. Vs random, 200 duels: Lightsworn 97.5% (unchanged),
+Blackwing-DAD 98.5% (99.5%); 0 rejected, 0 failed forks.
+
+**200 Bo3, same seeds as the 65.5% run:** Lightsworn **62.0% [55.1, 68.4]** vs 45.1% real. Paired: 25
+matches flipped to Blackwing-DAD, 18 to Lightsworn (sign test p = 0.36) - not distinguishable.
+
+Per game (530 games; Blackwing-DAD won 233): **Vayu activations 280 (0.53/game)**; **Icarus Attack in
+response to removal 10 (0.02/game)** vs plain trades 198 (0.37/game: 174 in chain windows, 24 from the
+Main Phase) - Lightsworn's removal rarely targets (Judgment Dragon and Lyla-style wipes/sends do not);
+**RftDD 109 activations (0.21/game), 16 lethal** (the 65.5% run: 102 in chain windows, 1 lethal - its
+Main Phase activations were not logged, so the lethal count is not comparable). Lost games ending with a
+trap still set: 35% -> 36%.
