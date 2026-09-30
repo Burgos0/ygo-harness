@@ -384,8 +384,10 @@ class GraveResources:
 
 
 STATUS_SUMMONED_THIS_TURN = 0x800 | 0x40000000     # STATUS_SUMMON_TURN | STATUS_SPSUMMON_TURN
-SEARCHED_PROMPTS = (MSG_SELECT_PLACE, MSG_SELECT_DISFIELD, MSG_SELECT_TRIBUTE, MSG_SELECT_UNSELECT_CARD,
-                    MSG_ANNOUNCE_NUMBER)
+#: Prompts searched on forks in the real duel. Zones (MSG_SELECT_PLACE / DISFIELD) are not: they almost
+#: never change the outcome, and searching them cost 38% of matchup throughput for no measurable effect -
+#: Rules.place_rule (lowest free zone) answers them everywhere.
+SEARCHED_PROMPTS = (MSG_SELECT_TRIBUTE, MSG_SELECT_UNSELECT_CARD, MSG_ANNOUNCE_NUMBER)
 EXTRA_DECK_TYPES = TYPE_SYNCHRO | TYPE_FUSION | TYPE_XYZ | TYPE_LINK
 
 

@@ -591,3 +591,11 @@ at the documented biases (see "Known sim biases"): no side decking in games 2-3,
 hundreds of builds, a lookahead that assumes the opponent never responds (which costs a trap deck more
 than a Lightsworn deck), and player-skill selection in the real data. Step 4 should carry the
 +15-20 point matchup gap as a known offset rather than a tuning target.
+
+## Zone choice back to the fixed rule (2026-09-30)
+
+Zones (`MSG_SELECT_PLACE` / `DISFIELD`) are answered by `Rules.place_rule` (lowest free zone) in the
+real duel too; one-at-a-time picks, Tributes and numbers stay searched. Vs random, 200 duels: Lightsworn
+97.5%, Blackwing-DAD 98.5% (both unchanged), 0 fallbacks, 0 rejected. 200 Bo3 same seeds: Lightsworn
+**62.5% [55.6, 68.9]** vs 63.0% with zone search - within noise (paired p above). **29.8 -> 41.9
+matches/min.**
